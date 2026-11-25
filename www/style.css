@@ -235,6 +235,24 @@ body[data-state="finishing"] .shutter span { animation: pulse .8s ease-in-out in
   background-position: right 14px center, right 9px center; background-size: 5px 5px; background-repeat: no-repeat;
 }
 .row select option { background: #1c1c1e; }
+.row-text { display: flex; flex-direction: column; gap: 3px; }
+.row-text small { color: var(--muted); font-size: 13px; line-height: 1.35; }
+/* iOS-tyylinen kytkin */
+.switch-input {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; cursor: pointer;
+  width: 51px; height: 31px; border-radius: 999px; padding: 0 !important; border: 0 !important;
+  background: rgba(120,120,128,.36) !important; transition: background .2s;
+}
+.switch-input::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.3); transition: transform .25s var(--ease);
+}
+.switch-input:checked { background: var(--ok) !important; }
+.switch-input:checked::after { transform: translateX(20px); }
+.golf-badge {
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px;
+  background: rgba(48,209,88,.2); color: var(--ok);
+}
 .num { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .num input { width: 64px; text-align: center; }
 .help { padding: 12px 14px; }

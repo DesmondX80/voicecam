@@ -43,6 +43,19 @@ Sivun pitää tulla HTTPS-osoitteesta (katso Kehitys).
 
 Asetuksissa voi valita kielen (fi/en), maksimipituuden, aloitusviiveen ja äänen tallennuksen.
 
+## Golf swing -tila
+
+Asetuksista päälle kytkettävä tila, joka leikkaa videon lyönnin mukaan (`www/swing.js`):
+
+- Tallennuksen aikana esikatselusta mitataan liike (muuttuneiden pikselien osuus, 96 px leveä harmaasävykuva).
+- Suurin liikepiikki = alaswing/osuma. Siitä taaksepäin haetaan ≥ 0,5 s paikallaanolo = **aloitusasento**;
+  lyönti alkaa, kun liike lähtee siitä. Eteenpäin haetaan loppuasennon pysähtyminen.
+- Leike: 1 s ennen lyönnin alkua → 1 s loppuasennon jälkeen, kuitenkin ennen **lopeta-komentoa**
+  (natiivi tunnistin kertoo puheen alkuhetken; muuten arvio 1,3 s ennen tunnistusta).
+- Leikkaus ilman uudelleenpakkausta: näytteet karsitaan avainkuvan tarkkuudella (golf-tilassa avainkuva 0,5 s välein)
+  ja tarkka kohta merkitään MP4:n edit listiin.
+- Kamera jalustalle: tunnistus olettaa, että kuvassa liikkuu vain lyöjä.
+
 ## Kehitys
 
 Web-sovellus on kansiossa `www/` ilman build-vaihetta: `index.html`, `app.js`, `style.css`, `sw.js` (service worker / offline),

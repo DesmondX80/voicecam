@@ -8,6 +8,10 @@
  * opts.audio (valinnainen): erikseen nauhoitettu AAC-ääni, joka lisätään omaksi raidaksi:
  *   { asc: Uint8Array, frames: Uint8Array[], sampleRate, channels, bitrate, offsetMs }
  *   offsetMs = kuinka paljon aiemmin ääni alkoi kuin video (alusta pudotetaan vastaava määrä).
+ *
+ * opts.trim (valinnainen): { startMs, endMs } videon alusta. Näytteet ennen edeltävää avainkuvaa ja
+ *   lopun jälkeen poistetaan; tarkka alku- ja loppukohta merkitään edit listiin (edts/elst),
+ *   joten uudelleenpakkausta ei tarvita.
  */
 (function (root) {
   const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'mvex', 'moof', 'traf', 'edts', 'dinf']);
@@ -61,10 +65,13 @@
   }
 
   // AAC-ääniraita (mp4a/esds) erikseen nauhoitetuista kehyksistä
+  // Edit list: esitetään mediasta kohta [mediaTime, mediaTime + duration]
+  const edtsBox = (e) => box('edts', fullBox('elst', 1, 0, u32(1), u64(e.duration), u64(e.mediaTime), u8(0, 1, 0, 0)));
+
   function audioTrak(x, chunkOffset, movieScale) {
     const n = x.frames.length;
     const dur = n * 1024;
-    const tDur = Math.round(dur * movieScale / x.sampleRate);
+    const tDur = x.edit ? x.edit.duration : Math.round(dur * movieScale / x.sampleRate);
     const matrix = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000];
     const tkhd = fullBox('tkhd', 0, 7, u32(0), u32(0), u32(x.id), u32(0), u32(tDur), u32(0), u32(0),
       u8(0, 0, 0, 0), u8(1, 0, 0, 0), ...matrix.map(u32), u32(0), u32(0));
@@ -85,7 +92,7 @@
       fullBox('mdhd', 0, 0, u32(0), u32(0), u32(x.sampleRate), u32(dur), u8(0x55, 0xc4, 0, 0)),
       fullBox('hdlr', 0, 0, u32(0), ascii('soun'), u32(0), u32(0), u32(0), ascii('SoundHandler\0')),
       minf);
-    return box('trak', tkhd, mdia);
+    return x.edit ? box('trak', tkhd, edtsBox(x.edit), mdia) : box('trak', tkhd, mdia);
   }
 
   function fixMp4(input, opts = {}) {
@@ -129,7 +136,7 @@
     }
 
     // fragmentit tiedostojärjestyksessä
-    const order = []; // [{track, samples}] kirjoitusjärjestys
+    let order = []; // raidat chunkkien kirjoitusjärjestyksessä
     for (const moof of findAll(top, 'moof')) {
       for (const traf of findAll(moof.children, 'traf')) {
         const tfhd = find(traf.children, 'tfhd');
@@ -204,8 +211,45 @@
     const mvVer = dv.getUint8(mvhd.body);
     const movieScale = dv.getUint32(mvhd.body + (mvVer === 1 ? 20 : 12));
     const trackDur = (t) => t.samples.reduce((s, x) => s + x.dur, 0);
-    const movieDur = Math.max(...list.map((t) => Math.round(trackDur(t) * movieScale / t.timescale)),
-      extra ? Math.round(extra.frames.length * 1024 * movieScale / extra.sampleRate) : 0);
+
+    // ---------- leikkaus ----------
+    const trim = opts.trim;
+    if (trim && trim.endMs > trim.startMs) {
+      const cut = (samples, timescale, isVideo) => {
+        let time = 0;
+        const times = samples.map((x) => { const tt = time; time += x.dur; return tt; });
+        const start = (trim.startMs / 1000) * timescale;
+        const end = (trim.endMs / 1000) * timescale;
+        // Video voi alkaa vain avainkuvasta: aloitetaan alkukohtaa edeltävästä avainkuvasta.
+        let first = 0;
+        for (let i = 0; i < samples.length && times[i] <= start; i++) if (!isVideo || samples[i].sync) first = i;
+        let last = samples.length - 1;
+        while (last > first && times[last] >= end) last--;
+        const availEnd = Math.min(end, time);
+        const durMs = Math.max(0, (availEnd - Math.max(start, times[first])) * 1000 / timescale);
+        return {
+          kept: samples.slice(first, last + 1),
+          edit: { mediaTime: Math.max(0, Math.round(start - times[first])), duration: Math.round(durMs * movieScale / 1000) },
+        };
+      };
+      for (const t of list) {
+        const r = cut(t.samples, t.timescale, t.handler === 'vide');
+        t.samples = r.kept;
+        t.chunks = [[0, t.samples.length]];
+        t.edit = r.edit;
+      }
+      order = list.slice();
+      if (extra) {
+        const r = cut(extra.frames.map((f) => ({ f, dur: 1024, sync: true })), extra.sampleRate, false);
+        extra.frames = r.kept.map((x) => x.f);
+        extra.edit = r.edit;
+        if (!extra.frames.length) extra = null;
+      }
+    }
+
+    const tDurOf = (t) => (t.edit ? t.edit.duration : Math.round(trackDur(t) * movieScale / t.timescale));
+    const movieDur = Math.max(...list.map(tDurOf),
+      extra ? (extra.edit ? extra.edit.duration : Math.round(extra.frames.length * 1024 * movieScale / extra.sampleRate)) : 0);
 
     function patched(b, offV0, offV1, value) {
       const copy = new Uint8Array(raw(b)); // aito kopio
@@ -257,8 +301,8 @@
           patched(t.mdhd, 16, 24, trackDur(t)),
           raw(t.hdlr),
           box('minf', ...minfParts, stbl(t, offsetsByTrack[t.id])));
-        const tDur = Math.round(trackDur(t) * movieScale / t.timescale);
-        return box('trak', patched(t.tkhd, 20, 28, tDur), mdia);
+        const tkhd = patched(t.tkhd, 20, 28, tDurOf(t));
+        return t.edit ? box('trak', tkhd, edtsBox(t.edit), mdia) : box('trak', tkhd, mdia);
       });
       const mv = patched(mvhd, 16, 24, movieDur);
       if (extra) {

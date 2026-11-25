@@ -25,6 +25,9 @@ const langEl = $('lang');
 const maxLenEl = $('maxLen');
 const delayEl = $('delay');
 const audioModeEl = $('audioMode');
+const golfModeEl = $('golfMode');
+const golfBadge = $('golfBadge');
+const updateGolfBadge = () => { golfBadge.hidden = !golfModeEl.checked; };
 
 // ---------- Natiivi (Android-APK) ----------
 const Cap = window.Capacitor;
@@ -63,6 +66,74 @@ let recorder = null;
 let micStream = null; // selaimen mikrofoni, varataan vain tallennuksen ajaksi
 let micNative = false; // natiivi mikrofonijako käynnissä
 let videoStartTime = 0;
+let stopInfo = null;        // miten ja milloin tallennus pysäytettiin
+let lastSpeechStart = 0;    // natiivin tunnistimen viimeisin puheen alku (Date.now)
+let recordingGolf = false;
+
+// ---------- Golf: liikkeen mittaus esikatselusta ----------
+// Pieni harmaasävykuva jokaisesta kuvasta; mitataan muuttuneiden pikselien osuus edelliseen kuvaan.
+const motionCanvas = document.createElement('canvas');
+const motionCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
+let motion = [];
+let motionRunning = false;
+let prevGray = null;
+
+function startMotion() {
+  const vw = preview.videoWidth || 640;
+  const vh = preview.videoHeight || 360;
+  const W = 96;
+  const H = Math.max(1, Math.round((W * vh) / vw));
+  motionCanvas.width = W;
+  motionCanvas.height = H;
+  motion = [];
+  prevGray = null;
+  motionRunning = true;
+  const schedule = () => (preview.requestVideoFrameCallback
+    ? preview.requestVideoFrameCallback(step)
+    : requestAnimationFrame(step));
+  const step = () => {
+    if (!motionRunning) return;
+    try {
+      motionCtx.drawImage(preview, 0, 0, W, H);
+      const d = motionCtx.getImageData(0, 0, W, H).data;
+      const g = new Uint8Array(W * H);
+      for (let i = 0; i < g.length; i++) g[i] = (d[4 * i] * 77 + d[4 * i + 1] * 150 + d[4 * i + 2] * 29) >> 8;
+      if (prevGray) {
+        let changed = 0;
+        for (let i = 0; i < g.length; i++) if (Math.abs(g[i] - prevGray[i]) > 18) changed++;
+        motion.push({ t: Date.now() - videoStartTime, m: changed / g.length });
+      }
+      prevGray = g;
+    } catch (_) { /* kuva ei vielä valmis */ }
+    schedule();
+  };
+  schedule();
+}
+function stopMotion() { motionRunning = false; prevGray = null; }
+
+// Leikkauskohdat: lyönnin tunnistus + lopeta-komennon poisto
+function golfTrim() {
+  if (!stopInfo) return { trim: null, note: '' };
+  let endLimitMs = Infinity;
+  let peakLimitMs = Infinity;
+  if (stopInfo.reason === 'voice') {
+    // Puheen alku natiivilta tunnistimelta, muuten arvio (tunnistus on ~1 s puhetta jäljessä)
+    const sp = stopInfo.speechStart;
+    const cutAt = sp && sp > stopInfo.at - 4000 && sp > videoStartTime ? sp - 150 : stopInfo.at - 1300;
+    endLimitMs = cutAt - videoStartTime;
+  } else if (stopInfo.reason === 'button') {
+    peakLimitMs = stopInfo.at - videoStartTime - 2500; // käveltiin puhelimelle: ei etsitä piikkiä lopusta
+  }
+  const r = window.analyzeSwing ? window.analyzeSwing(motion, { endLimitMs, peakLimitMs }) : { found: false };
+  console.log('Golf-analyysi', JSON.stringify(r), 'näytteitä', motion.length, 'pysäytys', stopInfo.reason);
+  if (r.found) {
+    return { trim: { startMs: r.startMs, endMs: r.endMs }, note: `Lyönti tunnistettu ✓ ${((r.endMs - r.startMs) / 1000).toFixed(1)} s` };
+  }
+  if (Number.isFinite(endLimitMs) && endLimitMs > 500) {
+    return { trim: { startMs: 0, endMs: endLimitMs }, note: 'Lyöntiä ei tunnistettu – lopeta-komento leikattu' };
+  }
+  return { trim: null, note: 'Lyöntiä ei tunnistettu' };
+}
 let chunks = [];
 let recordedFile = null;
 let recordedUrl = null;
@@ -84,12 +155,13 @@ function loadSettings() {
     if (s.delay != null) delayEl.value = s.delay;
     if (s.facing === 'user' || s.facing === 'environment') facing = s.facing;
     if (['native', 'web', 'off'].includes(s.audioMode)) audioModeEl.value = s.audioMode;
+    golfModeEl.checked = !!s.golf;
   } catch (_) { /* ei tallennusta saatavilla */ }
 }
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      lang: langEl.value, maxLen: maxLenEl.value, delay: delayEl.value, audioMode: audioModeEl.value, facing,
+      lang: langEl.value, maxLen: maxLenEl.value, delay: delayEl.value, audioMode: audioModeEl.value, golf: golfModeEl.checked, facing,
     }));
   } catch (_) { /* ohitetaan */ }
 }
@@ -234,6 +306,8 @@ async function startRecording() {
     recorder = new MediaRecorder(recStream, {
       mimeType: mimeType || undefined,
       videoBitsPerSecond: 10_000_000,
+      // Golf-tilassa tiheämmät avainkuvat -> leikkaus osuu lähelle oikeaa kohtaa
+      ...(golfModeEl.checked ? { videoKeyFrameIntervalDuration: 500 } : {}),
     });
   } catch (e) {
     releaseMic();
@@ -246,6 +320,9 @@ async function startRecording() {
   recorder.onstop = finishRecording;
   recorder.start(500);
   videoStartTime = Date.now();
+  stopInfo = null;
+  recordingGolf = golfModeEl.checked;
+  if (recordingGolf) startMotion();
 
   setState('recording');
   btnSwitch.hidden = true;
@@ -260,10 +337,10 @@ async function startRecording() {
     timerEl.textContent = ((performance.now() - startTime) / 1000).toFixed(1) + ' s';
   }, 100);
   const maxLen = Math.max(2, Number(maxLenEl.value) || 10);
-  maxLenHandle = setTimeout(stopRecording, maxLen * 1000);
+  maxLenHandle = setTimeout(() => stopRecording('timer'), maxLen * 1000);
 }
 
-function stopRecording() {
+function stopRecording(reason = 'button') {
   if (state === 'countdown') {
     clearInterval(countdownHandle);
     countdownHandle = null;
@@ -274,12 +351,15 @@ function stopRecording() {
   if (state !== 'recording' || !recorder) return;
   clearTimeout(maxLenHandle);
   clearInterval(timerHandle);
+  stopInfo = { reason, at: Date.now(), speechStart: lastSpeechStart };
   recorder.stop();
   beep(440, 250);
 }
 
 async function finishRecording() {
   setState('finishing');
+  stopMotion();
+  const golf = recordingGolf ? golfTrim() : { trim: null, note: '' };
   releaseMic();
   let extraAudio = null;
   if (micNative) {
@@ -308,7 +388,7 @@ async function finishRecording() {
     // Muunnetaan tavalliseksi MP4:ksi (data säilyy ennallaan).
     try {
       setStatus('Viimeistellään videota…');
-      const fixed = window.fixMp4(new Uint8Array(await blob.arrayBuffer()), { audio: extraAudio });
+      const fixed = window.fixMp4(new Uint8Array(await blob.arrayBuffer()), { audio: extraAudio, trim: golf.trim });
       if (fixed) blob = new Blob([fixed], { type });
     } catch (e) {
       console.warn('MP4-korjaus epäonnistui, käytetään alkuperäistä:', e);
@@ -337,7 +417,7 @@ async function finishRecording() {
   btnShare.hidden = !canShare;
 
   resultEl.hidden = false;
-  setStatus(`Tallennettu (${(blob.size / 1e6).toFixed(1)} MB) – "aloita" kuvaa uuden`);
+  setStatus(golf.note || `Tallennettu (${(blob.size / 1e6).toFixed(1)} MB) – "aloita" kuvaa uuden`);
 }
 
 function discard() {
@@ -406,7 +486,7 @@ function matches(text, words) {
 function handleTranscript(text) {
   heardEl.textContent = `”${text}”`;
   if ((state === 'idle' || state === 'review') && matches(text, COMMANDS.flip)) { switchCamera(); return true; }
-  if ((state === 'recording' || state === 'countdown') && matches(text, COMMANDS.stop)) { stopRecording(); return true; }
+  if ((state === 'recording' || state === 'countdown') && matches(text, COMMANDS.stop)) { stopRecording('voice'); return true; }
   if (state === 'idle' && matches(text, COMMANDS.start)) { requestStart(); return true; }
   // Tallennuksen jälkeen "aloita" aloittaa suoraan uuden tallenteen, "uusi" palaa kameraan.
   if (state === 'review' && matches(text, COMMANDS.start)) { discard(); requestStart(); return true; }
@@ -465,6 +545,7 @@ async function startNativeListening() {
       const text = full.slice(micHandledLen).trim();
       if (text && handleTranscript(text)) micHandledLen = full.length;
     });
+    await NativeMic.addListener('speechStart', (e) => { lastSpeechStart = e.time; });
     await NativeMic.addListener('speechError', (e) => console.log('MicShare puhevirhe', e.code, e.message));
   }
   await NativeSpeech.addListener('listeningState', ({ status }) => {
@@ -568,7 +649,7 @@ btnInit.addEventListener('click', async () => {
 btnRecord.addEventListener('click', () => {
   if (state === 'review') discard();
   if (state === 'idle') requestStart();
-  else stopRecording();
+  else stopRecording('button');
 });
 btnShare.addEventListener('click', share);
 $('btnClose').addEventListener('click', discard);
@@ -591,7 +672,8 @@ btnDownload.addEventListener('click', (e) => {
   nativeSave();
 });
 
-[langEl, maxLenEl, delayEl, audioModeEl].forEach((el) => el.addEventListener('change', saveSettings));
+golfModeEl.addEventListener('change', updateGolfBadge);
+[langEl, maxLenEl, delayEl, audioModeEl, golfModeEl].forEach((el) => el.addEventListener('change', saveSettings));
 langEl.addEventListener('change', restartListening);
 
 document.addEventListener('visibilitychange', () => {
@@ -643,6 +725,7 @@ if (!isNative) {
   audioModeEl.value = 'off';
 }
 loadSettings();
+updateGolfBadge();
 if (!window.isSecureContext) {
   setStatus('Avaa sivu HTTPS-osoitteesta');
 }

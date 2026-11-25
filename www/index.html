@@ -53,6 +53,7 @@
     <div class="status-wrap">
       <div id="status" class="pill glass" role="status" aria-live="polite">Käynnistä kamera</div>
       <div id="timer" class="pill rec-pill" hidden>0.0 s</div>
+      <span id="golfBadge" class="golf-badge" hidden>GOLF</span>
       <div id="heard" class="caption"></div>
     </div>
     <button id="btnSettings" class="icon-btn glass" aria-label="Asetukset" title="Asetukset">
@@ -117,6 +118,16 @@
       </label>
     </div>
 
+    <div class="group">
+      <label class="row">
+        <span class="row-text">
+          <span>Golf swing -tila</span>
+          <small>Tunnistaa aloitusasennon ja lyönnin ja leikkaa videon niiden mukaan. Lopeta-komento leikataan pois lopusta.</small>
+        </span>
+        <input id="golfMode" type="checkbox" class="switch-input">
+      </label>
+    </div>
+
     <div class="group help">
       <h3>Äänikomennot</h3>
       <dl>
@@ -136,6 +147,7 @@
 
   <script src="capacitor.js"></script>
   <script src="mp4fix.js"></script>
+  <script src="swing.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

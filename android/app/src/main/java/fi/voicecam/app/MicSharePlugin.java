@@ -334,7 +334,12 @@ public class MicSharePlugin extends Plugin {
 
     private final RecognitionListener listener = new RecognitionListener() {
         @Override public void onReadyForSpeech(Bundle params) { Log.d(TAG, "ready for speech"); }
-        @Override public void onBeginningOfSpeech() { }
+        @Override public void onBeginningOfSpeech() {
+            // Puheen alkuhetki: golf-tilassa lopeta-komento leikataan tästä kohdasta pois
+            JSObject data = new JSObject();
+            data.put("time", System.currentTimeMillis());
+            notifyListeners("speechStart", data);
+        }
         @Override public void onRmsChanged(float rmsdB) { }
         @Override public void onBufferReceived(byte[] buffer) { }
         @Override public void onEndOfSpeech() { }
