@@ -1,6 +1,6 @@
 'use strict';
 // Päivitä versio aina kun sovelluksen tiedostot muuttuvat, jotta puhelin hakee uudet.
-const CACHE = 'voicecam-v10';
+const CACHE = 'voicecam-v11';
 const ASSETS = [
   './',
   'index.html',

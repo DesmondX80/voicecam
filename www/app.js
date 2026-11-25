@@ -111,17 +111,27 @@ function startMotion() {
 }
 function stopMotion() { motionRunning = false; prevGray = null; }
 
-// Leikkauskohdat: lyönnin tunnistus + lopeta-komennon poisto
+// Lopeta-komennon alkukohta videon alusta (ms), tai Infinity jos pysäytettiin muuten kuin äänellä.
+// Puheen alku saadaan natiivilta tunnistimelta; muuten arvio (tunnistus on ~1 s puhetta jäljessä).
+function commandCutMs() {
+  if (!stopInfo || stopInfo.reason !== 'voice') return Infinity;
+  const sp = stopInfo.speechStart;
+  const cutAt = sp && sp > stopInfo.at - 4000 && sp > videoStartTime ? sp - 150 : stopInfo.at - 1300;
+  return cutAt - videoStartTime;
+}
+
+// Kaikki tallenteet: lopeta-komento leikataan pois lopusta.
+function commandTrim() {
+  const end = commandCutMs();
+  return Number.isFinite(end) && end > 500 ? { trim: { startMs: 0, endMs: end }, note: '' } : { trim: null, note: '' };
+}
+
+// Golf: lyönnin tunnistus + lopeta-komennon poisto
 function golfTrim() {
   if (!stopInfo) return { trim: null, note: '' };
-  let endLimitMs = Infinity;
+  const endLimitMs = commandCutMs();
   let peakLimitMs = Infinity;
-  if (stopInfo.reason === 'voice') {
-    // Puheen alku natiivilta tunnistimelta, muuten arvio (tunnistus on ~1 s puhetta jäljessä)
-    const sp = stopInfo.speechStart;
-    const cutAt = sp && sp > stopInfo.at - 4000 && sp > videoStartTime ? sp - 150 : stopInfo.at - 1300;
-    endLimitMs = cutAt - videoStartTime;
-  } else if (stopInfo.reason === 'button') {
+  if (stopInfo.reason === 'button') {
     peakLimitMs = stopInfo.at - videoStartTime - 2500; // käveltiin puhelimelle: ei etsitä piikkiä lopusta
   }
   const r = window.analyzeSwing ? window.analyzeSwing(motion, { endLimitMs, peakLimitMs }) : { found: false };
@@ -182,6 +192,22 @@ function beep(freq = 880, ms = 150) {
   osc.start();
   osc.stop(audioCtx.currentTime + ms / 1000);
 }
+
+// Äänimerkki vain tallennuksen alkaessa ja loppuessa.
+// APK: natiivi merkki hälytyskanavalla (kuuluu, vaikka järjestelmän piippaukset on mykistetty).
+function cue(kind) {
+  if (NativeMic) NativeMic.tone({ kind }).catch(() => beep(kind === 'start' ? 1320 : 440, 250));
+  else beep(kind === 'start' ? 1320 : 440, kind === 'start' ? 200 : 250);
+}
+
+// Puheentunnistimen jatkuvat piippaukset pois, kun kamera on päällä (APK).
+// Tallennetun videon toiston ajaksi äänet palautetaan.
+function setBeepMute(on) {
+  if (NativeMic) NativeMic.muteSystemBeeps({ mute: on }).catch(() => {});
+}
+playback.addEventListener('play', () => setBeepMute(false));
+playback.addEventListener('pause', () => { if (state !== 'off') setBeepMute(true); });
+playback.addEventListener('ended', () => { if (state !== 'off') setBeepMute(true); });
 
 // ---------- Kamera ----------
 async function startCamera() {
@@ -246,7 +272,6 @@ function requestStart() {
   let left = delay;
   setStatus(`Alkaa ${left}…`);
   showCount(left);
-  beep(660, 100);
   countdownHandle = setInterval(() => {
     left -= 1;
     if (left <= 0) {
@@ -257,7 +282,6 @@ function requestStart() {
     } else {
       setStatus(`Alkaa ${left}…`);
       showCount(left);
-      beep(660, 100);
     }
   }, 1000);
 }
@@ -331,7 +355,7 @@ async function startRecording() {
   timerEl.hidden = false;
   // Äänen kanssa mikrofoni on videon käytössä, joten "lopeta" ei kuulu: pysäytys napista tai ajastimella.
   setStatus(micStream ? '● Tallentaa – lopeta napista' : '● Tallentaa', true);
-  beep(1320, 200);
+  cue('start');
 
   timerHandle = setInterval(() => {
     timerEl.textContent = ((performance.now() - startTime) / 1000).toFixed(1) + ' s';
@@ -353,13 +377,13 @@ function stopRecording(reason = 'button') {
   clearInterval(timerHandle);
   stopInfo = { reason, at: Date.now(), speechStart: lastSpeechStart };
   recorder.stop();
-  beep(440, 250);
+  cue('stop');
 }
 
 async function finishRecording() {
   setState('finishing');
   stopMotion();
-  const golf = recordingGolf ? golfTrim() : { trim: null, note: '' };
+  const golf = recordingGolf ? golfTrim() : commandTrim();
   releaseMic();
   let extraAudio = null;
   if (micNative) {
@@ -618,7 +642,6 @@ async function switchCamera() {
   try {
     await startCamera();
     saveSettings();
-    beep(990, 80);
   } catch (e) {
     facing = previous; // palataan entiseen, jos toista kameraa ei ole
     setStatus('Kameran vaihto ei onnistunut');
@@ -637,6 +660,7 @@ btnInit.addEventListener('click', async () => {
     setStatus('Kamera ei käynnisty: ' + e.message);
     return;
   }
+  setBeepMute(true);
   btnInit.hidden = true;
   btnRecord.hidden = false;
   btnSwitch.hidden = false;

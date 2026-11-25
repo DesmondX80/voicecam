@@ -1,7 +1,10 @@
 package fi.voicecam.app;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaCodec;
@@ -35,6 +38,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -78,6 +83,65 @@ public class MicSharePlugin extends Plugin {
     private volatile FileOutputStream pipeOut;
     private ParcelFileDescriptor pipeWrite;
     private final BlockingQueue<byte[]> pipeQueue = new ArrayBlockingQueue<>(100); // ~2 s puskuri
+
+    // ---------- järjestelmän piippausten mykistys + omat äänimerkit ----------
+    // Androidin puheentunnistin piippaa joka kerta kun se käynnistyy uudelleen (muutaman sekunnin välein).
+    // Mykistetään media-, ilmoitus- ja järjestelmäkanava kun kamera on päällä; palautetaan kun sovellus
+    // menee taustalle. Omat aloitus/lopetus-merkit soitetaan hälytyskanavalla, joka ei ole mykistetty.
+    private static final int[] BEEP_STREAMS = {
+        AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM
+    };
+    private final Set<Integer> mutedByUs = new HashSet<>();
+    private boolean wantMute = false;
+    private ToneGenerator toneGen;
+
+    @PluginMethod
+    public void muteSystemBeeps(PluginCall call) {
+        wantMute = Boolean.TRUE.equals(call.getBoolean("mute", false));
+        applyMute(wantMute);
+        call.resolve();
+    }
+
+    private synchronized void applyMute(boolean mute) {
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
+        if (mute) {
+            for (int s : BEEP_STREAMS) {
+                try {
+                    if (!mutedByUs.contains(s) && !am.isStreamMute(s)) {
+                        am.adjustStreamVolume(s, AudioManager.ADJUST_MUTE, 0);
+                        mutedByUs.add(s);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "mute stream " + s + " failed: " + e.getMessage()); // esim. Älä häiritse -tila
+                }
+            }
+        } else {
+            for (int s : mutedByUs) {
+                try { am.adjustStreamVolume(s, AudioManager.ADJUST_UNMUTE, 0); } catch (Exception ignored) { }
+            }
+            mutedByUs.clear();
+        }
+    }
+
+    @PluginMethod
+    public void tone(PluginCall call) {
+        boolean stop = "stop".equals(call.getString("kind", "start"));
+        try {
+            if (toneGen == null) toneGen = new ToneGenerator(AudioManager.STREAM_ALARM, 90);
+            // Aloitus: yksi piippaus, lopetus: kaksi
+            toneGen.startTone(stop ? ToneGenerator.TONE_PROP_BEEP2 : ToneGenerator.TONE_PROP_BEEP, stop ? 400 : 250);
+        } catch (Exception e) {
+            Log.w(TAG, "tone failed: " + e.getMessage());
+        }
+        call.resolve();
+    }
+
+    @Override
+    protected void handleOnPause() { applyMute(false); }
+
+    @Override
+    protected void handleOnResume() { if (wantMute) applyMute(true); }
 
     @PluginMethod
     public void isSupported(PluginCall call) {
@@ -365,6 +429,8 @@ public class MicSharePlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        applyMute(false);
+        if (toneGen != null) { toneGen.release(); toneGen = null; }
         running = false;
         main.post(this::stopRecognizer);
         releaseAudio();
