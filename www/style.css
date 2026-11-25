@@ -249,6 +249,15 @@ body[data-state="finishing"] .shutter span { animation: pulse .8s ease-in-out in
 }
 .switch-input:checked { background: var(--ok) !important; }
 .switch-input:checked::after { transform: translateX(20px); }
+.badges { display: flex; gap: 6px; }
+.badges:not(:has(:not([hidden]))) { display: none; }
+.fps-badge {
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px;
+  background: rgba(10,132,255,.25); color: #64b5ff;
+}
+/* Natiivi hidastuskuvaus: esikatselu on sivun alla, joten sivu läpinäkyväksi */
+html.native-cam, html.native-cam body { background: transparent; }
+html.native-cam #preview { display: none; }
 .golf-badge {
   font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 999px;
   background: rgba(48,209,88,.2); color: var(--ok);

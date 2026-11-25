@@ -53,7 +53,10 @@
     <div class="status-wrap">
       <div id="status" class="pill glass" role="status" aria-live="polite">Käynnistä kamera</div>
       <div id="timer" class="pill rec-pill" hidden>0.0 s</div>
-      <span id="golfBadge" class="golf-badge" hidden>GOLF</span>
+      <div class="badges">
+        <span id="fpsBadge" class="fps-badge" hidden></span>
+        <span id="golfBadge" class="golf-badge" hidden>GOLF</span>
+      </div>
       <div id="heard" class="caption"></div>
     </div>
     <button id="btnSettings" class="icon-btn glass" aria-label="Asetukset" title="Asetukset">
@@ -96,6 +99,10 @@
           <option value="fi-FI">Suomi</option>
           <option value="en-US">English</option>
         </select>
+      </label>
+      <label class="row stack">
+        <span>Kuvanopeus</span>
+        <select id="fpsMode"><option value="auto">Paras automaattisesti</option></select>
       </label>
       <label class="row">
         <span>Maksimipituus</span>

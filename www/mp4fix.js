@@ -103,7 +103,8 @@
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     const top = readBoxes(dv, 0, buf.length);
     const moov = find(top, 'moov');
-    if (!moov || !find(top, 'moof')) return null; // ei pilkottu MP4 – ei muutettavaa
+    if (!moov) return null;
+    const fragmented = !!find(top, 'moof');
     const raw = (b) => buf.subarray(b.start, b.end);
 
     // trex-oletukset
@@ -135,58 +136,116 @@
       };
     }
 
-    // fragmentit tiedostojärjestyksessä
     let order = []; // raidat chunkkien kirjoitusjärjestyksessä
-    for (const moof of findAll(top, 'moof')) {
-      for (const traf of findAll(moof.children, 'traf')) {
-        const tfhd = find(traf.children, 'tfhd');
-        const tf = dv.getUint32(tfhd.body) & 0xffffff;
-        const tr = tracks[dv.getUint32(tfhd.body + 4)];
-        if (!tr) continue;
-        let p = tfhd.body + 8;
-        let base = moof.start;
-        if (tf & 0x1) { base = Number(dv.getBigUint64(p)); p += 8; }
-        if (tf & 0x2) p += 4;
-        const defDur = tf & 0x8 ? dv.getUint32((p += 4) - 4) : tr.defaults.dur;
-        const defSize = tf & 0x10 ? dv.getUint32((p += 4) - 4) : tr.defaults.size;
-        const defFlags = tf & 0x20 ? dv.getUint32((p += 4) - 4) : tr.defaults.flags;
+    if (fragmented) {
+      // fragmentit tiedostojärjestyksessä
+      for (const moof of findAll(top, 'moof')) {
+        for (const traf of findAll(moof.children, 'traf')) {
+          const tfhd = find(traf.children, 'tfhd');
+          const tf = dv.getUint32(tfhd.body) & 0xffffff;
+          const tr = tracks[dv.getUint32(tfhd.body + 4)];
+          if (!tr) continue;
+          let p = tfhd.body + 8;
+          let base = moof.start;
+          if (tf & 0x1) { base = Number(dv.getBigUint64(p)); p += 8; }
+          if (tf & 0x2) p += 4;
+          const defDur = tf & 0x8 ? dv.getUint32((p += 4) - 4) : tr.defaults.dur;
+          const defSize = tf & 0x10 ? dv.getUint32((p += 4) - 4) : tr.defaults.size;
+          const defFlags = tf & 0x20 ? dv.getUint32((p += 4) - 4) : tr.defaults.flags;
 
-        const tfdt = find(traf.children, 'tfdt');
-        if (tfdt) {
-          const t = dv.getUint8(tfdt.body) === 1 ? Number(dv.getBigUint64(tfdt.body + 4)) : dv.getUint32(tfdt.body + 4);
-          // Aukko tai päällekkäisyys: korjataan edellisen näytteen kesto vastaamaan aikajanaa.
-          const last = tr.samples[tr.samples.length - 1];
-          if (last && t !== tr.time) {
-            const fixed = last.dur + (t - tr.time);
-            if (fixed > 0) { last.dur = fixed; tr.time = t; }
-          } else if (!last) tr.time = t;
-        }
-
-        let dataPos = base;
-        for (const trun of findAll(traf.children, 'trun')) {
-          const ver = dv.getUint8(trun.body);
-          const rf = dv.getUint32(trun.body) & 0xffffff;
-          const count = dv.getUint32(trun.body + 4);
-          let q = trun.body + 8;
-          if (rf & 0x1) { dataPos = base + dv.getInt32(q); q += 4; }
-          let firstFlags = null;
-          if (rf & 0x4) { firstFlags = dv.getUint32(q); q += 4; }
-          const first = tr.samples.length;
-          for (let i = 0; i < count; i++) {
-            let dur = defDur, size = defSize, flags = i === 0 && firstFlags !== null ? firstFlags : defFlags, cto = 0;
-            if (rf & 0x100) { dur = dv.getUint32(q); q += 4; }
-            if (rf & 0x200) { size = dv.getUint32(q); q += 4; }
-            if (rf & 0x400) { const f = dv.getUint32(q); q += 4; if (!(i === 0 && firstFlags !== null)) flags = f; }
-            if (rf & 0x800) { cto = ver === 1 ? dv.getInt32(q) : dv.getUint32(q); q += 4; }
-            if (dataPos + size > buf.length) break; // katkennut loppu
-            tr.samples.push({ pos: dataPos, size, dur, cto, sync: !((flags >> 16) & 1) });
-            dataPos += size;
-            tr.time += dur;
+          const tfdt = find(traf.children, 'tfdt');
+          if (tfdt) {
+            const t = dv.getUint8(tfdt.body) === 1 ? Number(dv.getBigUint64(tfdt.body + 4)) : dv.getUint32(tfdt.body + 4);
+            // Aukko tai päällekkäisyys: korjataan edellisen näytteen kesto vastaamaan aikajanaa.
+            const last = tr.samples[tr.samples.length - 1];
+            if (last && t !== tr.time) {
+              const fixed = last.dur + (t - tr.time);
+              if (fixed > 0) { last.dur = fixed; tr.time = t; }
+            } else if (!last) tr.time = t;
           }
-          const n = tr.samples.length - first;
-          if (n > 0) { tr.chunks.push([first, n]); order.push(tr); }
+
+          let dataPos = base;
+          for (const trun of findAll(traf.children, 'trun')) {
+            const ver = dv.getUint8(trun.body);
+            const rf = dv.getUint32(trun.body) & 0xffffff;
+            const count = dv.getUint32(trun.body + 4);
+            let q = trun.body + 8;
+            if (rf & 0x1) { dataPos = base + dv.getInt32(q); q += 4; }
+            let firstFlags = null;
+            if (rf & 0x4) { firstFlags = dv.getUint32(q); q += 4; }
+            const first = tr.samples.length;
+            for (let i = 0; i < count; i++) {
+              let dur = defDur, size = defSize, flags = i === 0 && firstFlags !== null ? firstFlags : defFlags, cto = 0;
+              if (rf & 0x100) { dur = dv.getUint32(q); q += 4; }
+              if (rf & 0x200) { size = dv.getUint32(q); q += 4; }
+              if (rf & 0x400) { const f = dv.getUint32(q); q += 4; if (!(i === 0 && firstFlags !== null)) flags = f; }
+              if (rf & 0x800) { cto = ver === 1 ? dv.getInt32(q) : dv.getUint32(q); q += 4; }
+              if (dataPos + size > buf.length) break; // katkennut loppu
+              tr.samples.push({ pos: dataPos, size, dur, cto, sync: !((flags >> 16) & 1) });
+              dataPos += size;
+              tr.time += dur;
+            }
+            const n = tr.samples.length - first;
+            if (n > 0) { tr.chunks.push([first, n]); order.push(tr); }
+          }
         }
       }
+    } else {
+      // Tavallinen MP4 (esim. Androidin natiivi MediaRecorder): näytteet stbl-taulukoista.
+      const chunkList = [];
+      for (const tr of Object.values(tracks)) {
+        const stbl = find(tr.minf.children, 'stbl').children;
+        const body = (type) => { const x = find(stbl, type); return x ? x.body : -1; };
+        const u = (o) => dv.getUint32(o);
+
+        const durs = [];
+        let o = body('stts');
+        for (let i = 0, n = u(o + 4); i < n; i++) {
+          const count = u(o + 8 + i * 8), delta = u(o + 12 + i * 8);
+          for (let k = 0; k < count; k++) durs.push(delta);
+        }
+        o = body('stsz');
+        const fixedSize = u(o + 4), count = u(o + 8);
+        const sizes = [];
+        for (let i = 0; i < count; i++) sizes.push(fixedSize || u(o + 12 + i * 4));
+        const ctts = [];
+        o = body('ctts');
+        if (o >= 0) {
+          const v1 = dv.getUint8(o) === 1;
+          for (let i = 0, n = u(o + 4); i < n; i++) {
+            const c = u(o + 8 + i * 8), off = v1 ? dv.getInt32(o + 12 + i * 8) : u(o + 12 + i * 8);
+            for (let k = 0; k < c; k++) ctts.push(off);
+          }
+        }
+        let sync = null;
+        o = body('stss');
+        if (o >= 0) { sync = new Set(); for (let i = 0, n = u(o + 4); i < n; i++) sync.add(u(o + 8 + i * 4) - 1); }
+        const offsets = [];
+        o = body('stco');
+        if (o >= 0) for (let i = 0, n = u(o + 4); i < n; i++) offsets.push(u(o + 8 + i * 4));
+        o = body('co64');
+        if (o >= 0) for (let i = 0, n = u(o + 4); i < n; i++) offsets.push(Number(dv.getBigUint64(o + 8 + i * 8)));
+        const stsc = [];
+        o = body('stsc');
+        for (let i = 0, n = u(o + 4); i < n; i++) stsc.push([u(o + 8 + i * 12), u(o + 12 + i * 12)]);
+
+        let si = 0;
+        for (let c = 0; c < offsets.length && si < count; c++) {
+          let spc = 0;
+          for (const [firstChunk, n] of stsc) if (firstChunk <= c + 1) spc = n;
+          let pos = offsets[c];
+          const first = tr.samples.length;
+          for (let k = 0; k < spc && si < count; k++, si++) {
+            if (pos + sizes[si] > buf.length) break; // katkennut loppu
+            tr.samples.push({ pos, size: sizes[si], dur: durs[si] || 0, cto: ctts[si] || 0, sync: !sync || sync.has(si) });
+            pos += sizes[si];
+          }
+          const n = tr.samples.length - first;
+          if (n > 0) { tr.chunks.push([first, n]); chunkList.push({ tr, offset: offsets[c] }); }
+        }
+      }
+      chunkList.sort((x, y) => x.offset - y.offset);
+      order = chunkList.map((x) => x.tr);
     }
 
     const list = Object.values(tracks).filter((t) => t.samples.length);

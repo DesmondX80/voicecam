@@ -43,6 +43,16 @@ Sivun pitää tulla HTTPS-osoitteesta (katso Kehitys).
 
 Asetuksissa voi valita kielen (fi/en), maksimipituuden, aloitusviiveen ja äänen tallennuksen.
 
+## Kuvanopeus (paras = suurin fps)
+
+APK lukee käynnistyessään laitteen kameroiden tilat (`HighSpeedCamPlugin.java`) ja valitsee aina suurimman fps:n
+(tasatilanteessa suurempi resoluutio, sitten pääkamera ennen laajakulmaa). Asetuksista voi valita tilan myös käsin.
+
+- **Hidastustilat** (Camera2 constrained high-speed, esim. 720p 120/240/480 fps): esikatselu ja tallennus natiivisti,
+  esikatselu läpinäkyvän WebView:n alla. Video tallentuu todellisella nopeudella; ääni MicSharelta.
+- **Tavalliset tilat**: selainkamera (getUserMedia) laitteen suurimmalla tavallisella nopeudella (esim. 60 fps).
+- Esim. moto g86 power: 720p 120 fps (laajakulma), pääkamera 60 fps. Selainversio käyttää aina selainkameraa.
+
 ## Golf swing -tila
 
 Asetuksista päälle kytkettävä tila, joka leikkaa videon lyönnin mukaan (`www/swing.js`):

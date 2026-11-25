@@ -9,6 +9,8 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Sovelluksen oma plugin: mikrofonin jako videon äänelle ja puheentunnistukselle.
         registerPlugin(MicSharePlugin.class);
+        // Hidastuskuvaus (Camera2 high-speed) natiivisti
+        registerPlugin(HighSpeedCamPlugin.class);
         super.onCreate(savedInstanceState);
         // Näyttö pysyy päällä, kun puhelin on jalustalla.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

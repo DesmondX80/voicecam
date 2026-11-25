@@ -27,6 +27,8 @@ const delayEl = $('delay');
 const audioModeEl = $('audioMode');
 const golfModeEl = $('golfMode');
 const golfBadge = $('golfBadge');
+const fpsModeEl = $('fpsMode');
+const fpsBadge = $('fpsBadge');
 const updateGolfBadge = () => { golfBadge.hidden = !golfModeEl.checked; };
 
 // ---------- Natiivi (Android-APK) ----------
@@ -37,6 +39,8 @@ const NativeFs = isNative ? Cap.registerPlugin('Filesystem') : null;
 const NativeShare = isNative ? Cap.registerPlugin('Share') : null;
 // Oma plugin: sama mikrofoni sekä videon ääneksi että puheentunnistukselle tallennuksen aikana
 const NativeMic = isNative ? Cap.registerPlugin('MicShare') : null;
+// Oma plugin: hidastuskuvaus (Camera2 high-speed), esim. 120/240/480 fps
+const HighSpeed = isNative ? Cap.registerPlugin('HighSpeedCam') : null;
 
 function base64ToBytes(b64) {
   const bin = atob(b64 || '');
@@ -166,12 +170,13 @@ function loadSettings() {
     if (s.facing === 'user' || s.facing === 'environment') facing = s.facing;
     if (['native', 'web', 'off'].includes(s.audioMode)) audioModeEl.value = s.audioMode;
     golfModeEl.checked = !!s.golf;
+    if (s.fpsMode) savedFpsMode = s.fpsMode;
   } catch (_) { /* ei tallennusta saatavilla */ }
 }
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      lang: langEl.value, maxLen: maxLenEl.value, delay: delayEl.value, audioMode: audioModeEl.value, golf: golfModeEl.checked, facing,
+      lang: langEl.value, maxLen: maxLenEl.value, delay: delayEl.value, audioMode: audioModeEl.value, golf: golfModeEl.checked, fpsMode: fpsModeEl.value || savedFpsMode, facing,
     }));
   } catch (_) { /* ohitetaan */ }
 }
@@ -210,27 +215,105 @@ playback.addEventListener('pause', () => { if (state !== 'off') setBeepMute(true
 playback.addEventListener('ended', () => { if (state !== 'off') setBeepMute(true); });
 
 // ---------- Kamera ----------
+// ---------- Kameratilat: paras = suurin fps ----------
+let camModes = [];      // laitteen tilat natiivilta (tyhjä selaimessa)
+let camKind = 'web';    // 'web' = getUserMedia, 'native' = hidastuskuvaus (HighSpeedCam)
+let activeMode = null;
+let savedFpsMode = 'auto';
+const modeKey = (m) => `${m.kind}:${m.cameraId}:${m.width}x${m.height}@${m.fps}`;
+
+function modesFor(f) {
+  const all = camModes.filter((m) => m.facing === f);
+  // Tavallisessa tilassa selainkamera ei voi valita linssiä: pidetään vain paras tavallinen tila.
+  const normal = all.filter((m) => m.kind === 'normal').sort((a, b) => b.fps - a.fps || b.focal - a.focal)[0];
+  const list = all.filter((m) => m.kind === 'highspeed').concat(normal ? [normal] : []);
+  // 1. suurin fps, 2. suurin resoluutio, 3. pidempi polttoväli (pääkamera), 4. tavallinen tila
+  return list.sort((a, b) => b.fps - a.fps || b.width * b.height - a.width * a.height
+    || b.focal - a.focal || (a.kind === 'normal' ? -1 : 1));
+}
+function modeLabel(m) {
+  const backs = camModes.filter((x) => x.facing === m.facing && x.kind === 'normal');
+  const maxF = Math.max(...backs.map((x) => x.focal));
+  const wide = m.kind === 'highspeed' && backs.length > 1 && m.focal < maxF * 0.7 ? ' · laajakulma' : '';
+  return `${Math.min(m.width, m.height)}p · ${m.fps} fps${wide}`;
+}
+function chooseMode() {
+  const list = modesFor(facing);
+  if (!list.length) return null;
+  const want = fpsModeEl.value || 'auto';
+  return (want !== 'auto' && list.find((m) => modeKey(m) === want)) || list[0];
+}
+function populateFpsModes() {
+  const list = modesFor(facing);
+  const keep = fpsModeEl.value || savedFpsMode;
+  fpsModeEl.innerHTML = '';
+  const auto = new Option(`Paras automaattisesti${list[0] ? ` (${modeLabel(list[0])})` : ''}`, 'auto');
+  fpsModeEl.add(auto);
+  for (const m of list) fpsModeEl.add(new Option(modeLabel(m), modeKey(m)));
+  fpsModeEl.value = list.some((m) => modeKey(m) === keep) ? keep : 'auto';
+}
+async function loadCameraModes() {
+  if (!HighSpeed) return;
+  try { camModes = (await HighSpeed.getModes()).modes || []; } catch (e) { console.warn('Kameratilat:', e); }
+  console.log('Kameratilat', JSON.stringify(camModes));
+  populateFpsModes();
+}
+
 async function startCamera() {
+  const mode = chooseMode();
+  activeMode = mode;
+  if (mode && mode.kind === 'highspeed') {
+    try {
+      if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; preview.srcObject = null; }
+      await HighSpeed.start({ cameraId: mode.cameraId, width: mode.width, height: mode.height, fps: mode.fps });
+      camKind = 'native';
+      setNativeView(true);
+      fpsBadge.textContent = `${mode.fps} fps`;
+      fpsBadge.hidden = false;
+      return;
+    } catch (e) {
+      console.warn('Hidastuskuvaus ei käynnistynyt, käytetään tavallista kameraa:', e);
+    }
+  }
+  if (camKind === 'native') { await HighSpeed.stop().catch(() => {}); }
+  camKind = 'web';
+  setNativeView(false);
+  await startWebCamera(mode ? mode.fps : 60);
+}
+
+// Natiivi esikatselu näkyy läpinäkyvän sivun alta
+function setNativeView(on) {
+  document.documentElement.classList.toggle('native-cam', on);
+}
+
+async function startWebCamera(fps) {
   if (stream) stream.getTracks().forEach((t) => t.stop());
   stream = null;
-  const video = (facingMode) => ({
-    facingMode,
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
-    frameRate: { ideal: 60 },
+  const video = (facingMode, frameRate) => ({
+    facingMode, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate,
   });
-  try {
-    // exact varmistaa, että puhelin todella vaihtaa kameraa
-    // Ei ääntä tässä: jos mikrofoni olisi varattu koko ajan, Android vaimentaisi puheentunnistuksen.
-    stream = await navigator.mediaDevices.getUserMedia({ video: video({ exact: facing }), audio: false });
-  } catch (_) {
-    stream = await navigator.mediaDevices.getUserMedia({ video: video({ ideal: facing }), audio: false });
+  // Ensin vaaditaan laitteen paras nopeus (min), sitten toiveena; exact varmistaa kameran vaihdon.
+  const attempts = [
+    ...(isNative && fps > 30 ? [video({ exact: facing }, { min: fps, ideal: fps })] : []),
+    video({ exact: facing }, { ideal: fps }),
+    video({ ideal: facing }, { ideal: fps }),
+  ];
+  let lastErr;
+  for (const v of attempts) {
+    try {
+      // Ei ääntä tässä: jos mikrofoni olisi varattu koko ajan, Android vaimentaisi puheentunnistuksen.
+      stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+      break;
+    } catch (e) { lastErr = e; }
   }
+  if (!stream) throw lastErr;
   preview.srcObject = stream;
   // Etukameran esikatselu peilataan kuten peilissä; tallenne itsessään ei ole peilattu.
   preview.classList.toggle('mirror', facing === 'user');
-  const s = stream.getVideoTracks()[0].getSettings();
-  console.log('Kamera:', s.width, 'x', s.height, '@', s.frameRate, 'fps');
+  const st = stream.getVideoTracks()[0].getSettings();
+  console.log('Kamera:', st.width, 'x', st.height, '@', st.frameRate, 'fps');
+  fpsBadge.textContent = st.frameRate ? `${Math.round(st.frameRate)} fps` : '';
+  fpsBadge.hidden = !st.frameRate;
 }
 
 function pickMimeType(recStream) {
@@ -292,10 +375,12 @@ function releaseMic() {
 }
 
 async function startRecording() {
-  if (state !== 'idle' || !stream) return;
+  if (state !== 'idle' || (camKind === 'web' && !stream)) return;
   setState('starting');
   let recStream = stream;
   let mode = audioModeEl.value;
+  // Natiiviin hidastusvideoon ääni tulee aina natiivilta mikrofonijaolta
+  if (camKind === 'native' && mode === 'web') mode = 'native';
   if (mode === 'native' && !NativeMic) mode = 'web';
   if (mode === 'native') {
     // Natiivi plugin nauhoittaa äänen ja syöttää saman äänen puheentunnistukselle,
@@ -310,10 +395,10 @@ async function startRecording() {
       console.warn('Natiivi mikrofoni ei käynnistynyt, käytetään selaimen mikrofonia:', e);
       micNative = false;
       resumeIdleListening();
-      mode = 'web';
+      mode = camKind === 'native' ? 'off' : 'web';
     }
   }
-  if (mode === 'web') {
+  if (mode === 'web' && camKind === 'web') {
     try {
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
@@ -324,6 +409,22 @@ async function startRecording() {
       releaseMic();
     }
   }
+  const cleanupFail = (msg) => {
+    releaseMic();
+    if (micNative) { micNative = false; NativeMic.stop().catch(() => {}); resumeIdleListening(); }
+    setState('idle');
+    setStatus(msg);
+  };
+  recordingGolf = golfModeEl.checked;
+  if (camKind === 'native') {
+    try {
+      const r = await HighSpeed.startRecording({ motion: recordingGolf });
+      videoStartTime = r.startTime;
+    } catch (e) {
+      cleanupFail('Tallennus ei onnistu: ' + e.message);
+      return;
+    }
+  } else {
   const mimeType = pickMimeType(recStream);
   chunks = [];
   try {
@@ -334,19 +435,16 @@ async function startRecording() {
       ...(golfModeEl.checked ? { videoKeyFrameIntervalDuration: 500 } : {}),
     });
   } catch (e) {
-    releaseMic();
-    if (micNative) { micNative = false; NativeMic.stop().catch(() => {}); resumeIdleListening(); }
-    setState('idle');
-    setStatus('Tallennus ei onnistu: ' + e.message);
+    cleanupFail('Tallennus ei onnistu: ' + e.message);
     return;
   }
   recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onstop = finishRecording;
   recorder.start(500);
   videoStartTime = Date.now();
+  if (recordingGolf) startMotion(); // natiivissa tilassa liike mitataan natiivisti
+  }
   stopInfo = null;
-  recordingGolf = golfModeEl.checked;
-  if (recordingGolf) startMotion();
 
   setState('recording');
   btnSwitch.hidden = true;
@@ -372,17 +470,27 @@ function stopRecording(reason = 'button') {
     setStatus('Valmis – sano "aloita"');
     return;
   }
-  if (state !== 'recording' || !recorder) return;
+  if (state !== 'recording' || (camKind === 'web' && !recorder)) return;
   clearTimeout(maxLenHandle);
   clearInterval(timerHandle);
   stopInfo = { reason, at: Date.now(), speechStart: lastSpeechStart };
-  recorder.stop();
+  if (camKind === 'native') finishRecording();
+  else recorder.stop();
   cue('stop');
 }
 
 async function finishRecording() {
   setState('finishing');
   stopMotion();
+  let nativeVideo = null;
+  if (camKind === 'native') {
+    try {
+      nativeVideo = await HighSpeed.stopRecording();
+      if (nativeVideo.motion) motion = nativeVideo.motion.map(([t, m]) => ({ t, m }));
+    } catch (e) {
+      console.warn('Hidastustallennus epäonnistui:', e);
+    }
+  }
   const golf = recordingGolf ? golfTrim() : commandTrim();
   releaseMic();
   let extraAudio = null;
@@ -403,10 +511,19 @@ async function finishRecording() {
     }
     resumeIdleListening();
   }
-  const recType = recorder.mimeType || 'video/webm';
-  const ext = recType.includes('mp4') ? 'mp4' : 'webm';
-  const type = ext === 'mp4' ? 'video/mp4' : 'video/webm';
-  let blob = new Blob(chunks, { type });
+  let ext, type, blob;
+  if (camKind === 'native') {
+    ext = 'mp4';
+    type = 'video/mp4';
+    if (!nativeVideo) { resetAfterFailure('Tallennus epäonnistui'); return; }
+    const resp = await fetch(Cap.convertFileSrc('file://' + nativeVideo.path));
+    blob = new Blob([await resp.arrayBuffer()], { type });
+  } else {
+    const recType = recorder.mimeType || 'video/webm';
+    ext = recType.includes('mp4') ? 'mp4' : 'webm';
+    type = ext === 'mp4' ? 'video/mp4' : 'video/webm';
+    blob = new Blob(chunks, { type });
+  }
   if (ext === 'mp4' && window.fixMp4) {
     // MediaRecorderin MP4 on pilkottu eikä siinä ole kestoa -> toisto takkuaa lopussa.
     // Muunnetaan tavalliseksi MP4:ksi (data säilyy ennallaan).
@@ -442,6 +559,16 @@ async function finishRecording() {
 
   resultEl.hidden = false;
   setStatus(golf.note || `Tallennettu (${(blob.size / 1e6).toFixed(1)} MB) – "aloita" kuvaa uuden`);
+}
+
+function resetAfterFailure(msg) {
+  recorder = null;
+  chunks = [];
+  btnRecord.classList.remove('on');
+  timerEl.hidden = true;
+  btnSwitch.hidden = false;
+  setState('idle');
+  setStatus(msg);
 }
 
 function discard() {
@@ -639,6 +766,7 @@ async function switchCamera() {
   const previous = facing;
   facing = facing === 'environment' ? 'user' : 'environment';
   setStatus(facing === 'user' ? 'Etukamera' : 'Takakamera');
+  populateFpsModes();
   try {
     await startCamera();
     saveSettings();
@@ -655,6 +783,7 @@ async function switchCamera() {
 btnInit.addEventListener('click', async () => {
   try {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await loadCameraModes();
     await startCamera();
   } catch (e) {
     setStatus('Kamera ei käynnisty: ' + e.message);
@@ -697,7 +826,21 @@ btnDownload.addEventListener('click', (e) => {
 });
 
 golfModeEl.addEventListener('change', updateGolfBadge);
-[langEl, maxLenEl, delayEl, audioModeEl, golfModeEl].forEach((el) => el.addEventListener('change', saveSettings));
+fpsModeEl.addEventListener('change', () => {
+  if (state === 'idle' || state === 'review') {
+    if (state === 'review') discard();
+    startCamera().catch((e) => setStatus('Kamera ei käynnisty: ' + e.message));
+  }
+});
+// Natiivi tallennus keskeytyi (sovellus taustalle): palautetaan käyttöliittymä
+if (HighSpeed) HighSpeed.addListener('interrupted', () => {
+  if (state !== 'recording') return;
+  clearTimeout(maxLenHandle);
+  clearInterval(timerHandle);
+  if (micNative) { micNative = false; NativeMic.stop().catch(() => {}); resumeIdleListening(); }
+  resetAfterFailure('Tallennus keskeytyi');
+});
+[langEl, maxLenEl, delayEl, audioModeEl, golfModeEl, fpsModeEl].forEach((el) => el.addEventListener('change', saveSettings));
 langEl.addEventListener('change', restartListening);
 
 document.addEventListener('visibilitychange', () => {
@@ -750,6 +893,7 @@ if (!isNative) {
 }
 loadSettings();
 updateGolfBadge();
+populateFpsModes();
 if (!window.isSecureContext) {
   setStatus('Avaa sivu HTTPS-osoitteesta');
 }
