@@ -818,6 +818,41 @@ function openSettings(open) {
 $('btnSettings').addEventListener('click', () => openSettings(true));
 $('btnSettingsDone').addEventListener('click', () => openSettings(false));
 sheetBackdrop.addEventListener('click', () => openSettings(false));
+
+// Paneelin sulkeminen pyyhkäisemällä alas. Vedon voi aloittaa otsikosta aina,
+// muualta vain kun sisältö on vieritetty ylös (muuten pyyhkäisy vierittää sisältöä).
+let dragY0 = null;
+let dragDy = 0;
+let dragT0 = 0;
+sheet.addEventListener('touchstart', (e) => {
+  if (!sheet.classList.contains('open') || e.target.closest('select, input')) return;
+  const fromHead = e.target.closest('.grabber, .sheet-head');
+  if (!fromHead && sheet.scrollTop > 0) return;
+  dragY0 = e.touches[0].clientY;
+  dragDy = 0;
+  dragT0 = performance.now();
+  sheet.style.transition = 'none';
+}, { passive: true });
+sheet.addEventListener('touchmove', (e) => {
+  if (dragY0 === null) return;
+  dragDy = Math.max(0, e.touches[0].clientY - dragY0);
+  if (dragDy > 0) {
+    e.preventDefault(); // ei vieritystä vedon aikana
+    sheet.style.transform = `translateY(${dragDy}px)`;
+    sheetBackdrop.style.opacity = String(Math.max(0, 1 - dragDy / (sheet.offsetHeight || 1)));
+  }
+}, { passive: false });
+function endSheetDrag() {
+  if (dragY0 === null) return;
+  const velocity = dragDy / Math.max(1, performance.now() - dragT0); // px/ms
+  sheet.style.transition = '';
+  sheet.style.transform = '';
+  sheetBackdrop.style.opacity = '';
+  if (dragDy > 120 || (dragDy > 40 && velocity > 0.5)) openSettings(false);
+  dragY0 = null;
+}
+sheet.addEventListener('touchend', endSheetDrag);
+sheet.addEventListener('touchcancel', endSheetDrag);
 btnSwitch.addEventListener('click', switchCamera);
 btnDownload.addEventListener('click', (e) => {
   if (!isNative) return; // selaimessa download-linkki hoitaa

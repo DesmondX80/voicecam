@@ -214,6 +214,9 @@ body[data-state="finishing"] .shutter span { animation: pulse .8s ease-in-out in
 }
 .sheet.open { transform: none; }
 .grabber { width: 38px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.3); margin: 0 auto 10px; }
+/* Isompi tartunta-alue vetämiselle */
+.sheet .grabber { position: relative; }
+.sheet .grabber::before { content: ""; position: absolute; inset: -14px -60px; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .sheet h2 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
 .group {
