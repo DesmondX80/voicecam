@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VoiceCam</string>
+    <string name="title_activity_main">VoiceCam</string>
+    <string name="package_name">fi.voicecam.app</string>
+    <string name="custom_url_scheme">fi.voicecam.app</string>
+</resources>

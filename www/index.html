@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="VoiceCam">
+  <title>VoiceCam</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <video id="preview" autoplay playsinline muted></video>
+  <video id="playback" playsinline controls hidden></video>
+
+  <div id="status" class="status">Käynnistä kamera</div>
+  <div id="heard" class="heard"></div>
+  <div id="timer" class="timer" hidden>0.0 s</div>
+
+  <div id="controls" class="controls">
+    <button id="btnInit" class="primary">Käynnistä kamera</button>
+    <button id="btnInstall" hidden>Asenna sovellus</button>
+    <button id="btnRecord" class="record" hidden aria-label="Aloita / lopeta tallennus"></button>
+  </div>
+
+  <div id="result" class="result" hidden>
+    <button id="btnShare" class="primary">Jaa analyysisovellukseen</button>
+    <a id="btnDownload" class="button">Tallenna laitteelle</a>
+    <button id="btnDiscard">Uusi lyönti</button>
+  </div>
+
+  <details id="settings" class="settings">
+    <summary>Asetukset</summary>
+    <label>Kieli
+      <select id="lang">
+        <option value="fi-FI">Suomi</option>
+        <option value="en-US">English</option>
+      </select>
+    </label>
+    <label>Maksimipituus (s)
+      <input id="maxLen" type="number" min="2" max="60" value="10">
+    </label>
+    <label>Viive aloituskomennosta (s)
+      <input id="delay" type="number" min="0" max="10" value="0">
+    </label>
+    <label><input id="withAudio" type="checkbox"> Tallenna ääni (voi häiritä puheentunnistusta)</label>
+    <p class="hint">
+      Komennot: <b>aloita / kuvaa / start</b> ja <b>lopeta / stop / seis</b>.
+      Tallennus pysähtyy myös automaattisesti maksimipituuden jälkeen.
+    </p>
+  </details>
+
+  <div id="iosInstall" class="ios-install" hidden>
+    Asenna: paina <b>Jaa</b> <span aria-hidden="true">⬆︎</span> ja valitse <b>Lisää Koti-valikkoon</b>.
+    <button id="btnIosClose" aria-label="Sulje">✕</button>
+  </div>
+
+  <script src="capacitor.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
