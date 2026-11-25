@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "VoiceCam – golflyönnin kuvaus",
+  "name": "VoiceCam",
   "short_name": "VoiceCam",
-  "description": "Kuvaa golflyönti äänikomennoilla ja jaa video analysointisovellukseen.",
+  "description": "Kamera äänikomennoilla: kuvaa videon ja jaa sen muihin sovelluksiin.",
   "lang": "fi",
   "start_url": "./",
   "scope": "./",
@@ -11,7 +11,7 @@
   "orientation": "any",
   "background_color": "#000000",
   "theme_color": "#000000",
-  "categories": ["sports", "photo"],
+  "categories": ["photo"],
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

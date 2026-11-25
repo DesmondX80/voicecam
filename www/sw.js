@@ -1,6 +1,6 @@
 'use strict';
 // Päivitä versio aina kun sovelluksen tiedostot muuttuvat, jotta puhelin hakee uudet.
-const CACHE = 'voicecam-v3';
+const CACHE = 'voicecam-v4';
 const ASSETS = [
   './',
   'index.html',
@@ -25,7 +25,7 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Verkko ensin (saadaan päivitykset), välimuisti jos verkkoa ei ole (range).
+// Verkko ensin (saadaan päivitykset), välimuisti jos verkkoa ei ole.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;

@@ -8,7 +8,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Näyttö pysyy päällä, kun puhelin on jalustalla rangella.
+        // Näyttö pysyy päällä, kun puhelin on jalustalla.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 }

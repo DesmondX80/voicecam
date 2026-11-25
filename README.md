@@ -1,6 +1,6 @@
 # voicecam
 
-Camera with voice commands: kuvaa golflyönti puhelimella äänikomennoilla ja vie video analysointisovellukseen.
+Camera with voice commands: kuvaa video puhelimella äänikomennoilla ja jaa se muihin sovelluksiin.
 
 Selainsovellus (PWA), joka toimii Androidilla (Chrome) ja iPhonella (Safari) ilman asennusta.
 
@@ -28,17 +28,17 @@ Sivun pitää tulla HTTPS-osoitteesta (katso Kehitys).
 ## Käyttö
 
 1. Avaa sivu puhelimella **HTTPS**-osoitteesta ja paina **Käynnistä kamera**.
-2. Aseta puhelin jalustalle ja kävele lyöntipaikalle.
+2. Aseta puhelin jalustalle ja siirry kuvattavaksi.
 3. Sano **"aloita"**, jolloin tallennus alkaa ja kuuluu korkea piippaus.
-4. Lyö. Sano **"lopeta"** (matala piippaus), tai anna tallennuksen pysähtyä maksimipituuden jälkeen (oletus 10 s).
-5. Paina **Jaa analyysisovellukseen**, jolloin puhelimen jakovalikko avautuu ja video menee mihin tahansa
-   analysointisovellukseen. Toinen vaihtoehto on **Tallenna laitteelle**. Sano **"uusi"** seuraavaa lyöntiä varten.
+4. Sano **"lopeta"** (matala piippaus), tai anna tallennuksen pysähtyä maksimipituuden jälkeen (oletus 10 s).
+5. Paina **Jaa**, jolloin puhelimen jakovalikko avautuu ja video menee mihin tahansa sovellukseen.
+   Toinen vaihtoehto on **Tallenna laitteelle**. Sano **"aloita"** tai paina tallennusnappia, niin uusi tallenne alkaa.
 
 | Toiminto | Komennot |
 |---|---|
 | Aloita | aloita, kuvaa, nauhoita, tallenna, start, record |
 | Lopeta | lopeta, stop, seis, valmis |
-| Uusi lyönti | uusi, uudestaan, again |
+| Takaisin kameraan | uusi, uudestaan, again |
 
 Asetuksissa voi valita kielen (fi/en), maksimipituuden, aloitusviiveen ja äänen tallennuksen.
 
@@ -59,7 +59,7 @@ python3 -m http.server 8000 --directory www
 
 - Video tallennetaan ilman ääntä oletuksena, koska samanaikainen äänitallennus voi viedä mikrofonin puheentunnistukselta.
 - iOS tallentaa MP4:ää. Android Chrome tallentaa MP4:ää uusissa versioissa ja muuten WebM:ää, jota
-  kaikki analysointisovellukset eivät avaa.
+  kaikki sovellukset eivät avaa.
 - Kuvanopeus riippuu selaimesta ja laitteesta (pyydetään 60 fps). Selain ei pääse puhelimen
   hidastusvideotilaan (120/240 fps).
 - Puheentunnistus vaatii yleensä verkkoyhteyden.

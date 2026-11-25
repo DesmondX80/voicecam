@@ -19,7 +19,6 @@ const btnRecord = $('btnRecord');
 const resultEl = $('result');
 const btnShare = $('btnShare');
 const btnDownload = $('btnDownload');
-const btnDiscard = $('btnDiscard');
 const langEl = $('lang');
 const maxLenEl = $('maxLen');
 const delayEl = $('delay');
@@ -79,7 +78,7 @@ function setStatus(text, rec = false) {
   statusEl.classList.toggle('rec', rec);
 }
 
-// ---------- Äänimerkit (golfaaja on kaukana puhelimesta) ----------
+// ---------- Äänimerkit (kuvattava voi olla kaukana puhelimesta) ----------
 function beep(freq = 880, ms = 150) {
   if (!audioCtx) return;
   const osc = audioCtx.createOscillator();
@@ -203,7 +202,7 @@ function finishRecording() {
   const blob = new Blob(chunks, { type });
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
-  const name = `golf-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  const name = `voicecam-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
   recordedFile = new File([blob], name, { type });
   recordedUrl = URL.createObjectURL(blob);
   recorder = null;
@@ -222,9 +221,8 @@ function finishRecording() {
   const canShare = isNative || !!(navigator.canShare && navigator.canShare({ files: [recordedFile] }));
   btnShare.hidden = !canShare;
 
-  $('controls').hidden = true;
   resultEl.hidden = false;
-  setStatus(`Tallennettu (${(blob.size / 1e6).toFixed(1)} MB) – "uusi" jatkaa`);
+  setStatus(`Tallennettu (${(blob.size / 1e6).toFixed(1)} MB) – "aloita" kuvaa uuden`);
 }
 
 function discard() {
@@ -238,7 +236,6 @@ function discard() {
   playback.hidden = true;
   preview.hidden = false;
   resultEl.hidden = true;
-  $('controls').hidden = false;
   state = 'idle';
   setStatus('Valmis – sano "aloita"');
 }
@@ -258,8 +255,8 @@ async function nativeShare() {
     setStatus('Valmistellaan jakoa…');
     const data = await blobToBase64(recordedFile);
     const { uri } = await NativeFs.writeFile({ path: recordedFile.name, data, directory: 'CACHE' });
-    setStatus('Jaa video analyysisovellukseen');
-    await NativeShare.share({ title: recordedFile.name, files: [uri], dialogTitle: 'Jaa lyöntivideo' });
+    setStatus('Valitse sovellus');
+    await NativeShare.share({ title: recordedFile.name, files: [uri], dialogTitle: 'Jaa video' });
   } catch (e) {
     if (!/cancel/i.test(e.message || '')) setStatus('Jako epäonnistui: ' + e.message);
   }
@@ -295,6 +292,8 @@ function handleTranscript(text) {
   heardEl.textContent = `”${text}”`;
   if ((state === 'recording' || state === 'countdown') && matches(text, COMMANDS.stop)) { stopRecording(); return true; }
   if (state === 'idle' && matches(text, COMMANDS.start)) { requestStart(); return true; }
+  // Tallennuksen jälkeen "aloita" aloittaa suoraan uuden tallenteen, "uusi" palaa kameraan.
+  if (state === 'review' && matches(text, COMMANDS.start)) { discard(); requestStart(); return true; }
   if (state === 'review' && matches(text, COMMANDS.again)) { discard(); return true; }
   return false;
 }
@@ -405,6 +404,7 @@ btnInit.addEventListener('click', async () => {
 });
 
 btnRecord.addEventListener('click', () => {
+  if (state === 'review') discard();
   if (state === 'idle') requestStart();
   else stopRecording();
 });
@@ -414,7 +414,6 @@ btnDownload.addEventListener('click', (e) => {
   e.preventDefault();
   nativeSave();
 });
-btnDiscard.addEventListener('click', discard);
 
 [langEl, maxLenEl, delayEl, withAudioEl].forEach((el) => el.addEventListener('change', saveSettings));
 langEl.addEventListener('change', restartListening);
