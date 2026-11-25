@@ -5,6 +5,7 @@ const COMMANDS = {
   start: ['aloita', 'aloitus', 'kuvaa', 'nauhoita', 'tallenna', 'start', 'record', 'action'],
   stop: ['lopeta', 'stop', 'seis', 'valmis', 'loppu', 'done', 'cut'],
   again: ['uusi', 'uudestaan', 'again', 'new'],
+  flip: ['vaihda', 'käännä', 'kameran vaihto', 'switch', 'flip'],
 };
 
 // ---------- Elementit ----------
@@ -16,13 +17,14 @@ const heardEl = $('heard');
 const timerEl = $('timer');
 const btnInit = $('btnInit');
 const btnRecord = $('btnRecord');
+const btnSwitch = $('btnSwitch');
 const resultEl = $('result');
 const btnShare = $('btnShare');
 const btnDownload = $('btnDownload');
 const langEl = $('lang');
 const maxLenEl = $('maxLen');
 const delayEl = $('delay');
-const withAudioEl = $('withAudio');
+const audioModeEl = $('audioMode');
 
 // ---------- Natiivi (Android-APK) ----------
 const Cap = window.Capacitor;
@@ -30,6 +32,15 @@ const isNative = !!(Cap && Cap.isNativePlatform && Cap.isNativePlatform());
 const NativeSpeech = isNative ? Cap.registerPlugin('SpeechRecognition') : null;
 const NativeFs = isNative ? Cap.registerPlugin('Filesystem') : null;
 const NativeShare = isNative ? Cap.registerPlugin('Share') : null;
+// Oma plugin: sama mikrofoni sekä videon ääneksi että puheentunnistukselle tallennuksen aikana
+const NativeMic = isNative ? Cap.registerPlugin('MicShare') : null;
+
+function base64ToBytes(b64) {
+  const bin = atob(b64 || '');
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -41,9 +52,17 @@ function blobToBase64(blob) {
 }
 
 // ---------- Tila ----------
-let state = 'off'; // off | idle | countdown | recording | review
+let state = 'off'; // off | idle | countdown | starting | recording | finishing | review
+// Tila näkyy myös <body data-state>, jonka mukaan CSS näyttää oikeat ohjaimet.
+function setState(s) {
+  state = s;
+  document.body.dataset.state = s;
+}
 let stream = null;
 let recorder = null;
+let micStream = null; // selaimen mikrofoni, varataan vain tallennuksen ajaksi
+let micNative = false; // natiivi mikrofonijako käynnissä
+let videoStartTime = 0;
 let chunks = [];
 let recordedFile = null;
 let recordedUrl = null;
@@ -53,6 +72,7 @@ let maxLenHandle = null;
 let countdownHandle = null;
 let audioCtx = null;
 let wakeLock = null;
+let facing = 'environment'; // environment = takakamera, user = etukamera
 
 // ---------- Asetukset (per laite) ----------
 const SETTINGS_KEY = 'voicecam.settings';
@@ -62,13 +82,14 @@ function loadSettings() {
     if (s.lang) langEl.value = s.lang;
     if (s.maxLen) maxLenEl.value = s.maxLen;
     if (s.delay != null) delayEl.value = s.delay;
-    withAudioEl.checked = !!s.withAudio;
+    if (s.facing === 'user' || s.facing === 'environment') facing = s.facing;
+    if (['native', 'web', 'off'].includes(s.audioMode)) audioModeEl.value = s.audioMode;
   } catch (_) { /* ei tallennusta saatavilla */ }
 }
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      lang: langEl.value, maxLen: maxLenEl.value, delay: delayEl.value, withAudio: withAudioEl.checked,
+      lang: langEl.value, maxLen: maxLenEl.value, delay: delayEl.value, audioMode: audioModeEl.value, facing,
     }));
   } catch (_) { /* ohitetaan */ }
 }
@@ -93,23 +114,32 @@ function beep(freq = 880, ms = 150) {
 // ---------- Kamera ----------
 async function startCamera() {
   if (stream) stream.getTracks().forEach((t) => t.stop());
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: { ideal: 'environment' },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 60 },
-    },
-    audio: withAudioEl.checked,
+  stream = null;
+  const video = (facingMode) => ({
+    facingMode,
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 60 },
   });
+  try {
+    // exact varmistaa, että puhelin todella vaihtaa kameraa
+    // Ei ääntä tässä: jos mikrofoni olisi varattu koko ajan, Android vaimentaisi puheentunnistuksen.
+    stream = await navigator.mediaDevices.getUserMedia({ video: video({ exact: facing }), audio: false });
+  } catch (_) {
+    stream = await navigator.mediaDevices.getUserMedia({ video: video({ ideal: facing }), audio: false });
+  }
   preview.srcObject = stream;
+  // Etukameran esikatselu peilataan kuten peilissä; tallenne itsessään ei ole peilattu.
+  preview.classList.toggle('mirror', facing === 'user');
   const s = stream.getVideoTracks()[0].getSettings();
   console.log('Kamera:', s.width, 'x', s.height, '@', s.frameRate, 'fps');
 }
 
-function pickMimeType() {
+function pickMimeType(recStream) {
+  const audio = recStream.getAudioTracks().length > 0;
   const candidates = [
-    'video/mp4;codecs=avc1',
+    // AAC-ääni on yhteensopivin muiden sovellusten kanssa, Opus varalla
+    ...(audio ? ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1,opus'] : ['video/mp4;codecs=avc1']),
     'video/mp4',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
@@ -127,51 +157,103 @@ async function requestWakeLock() {
 }
 
 // ---------- Tallennus ----------
+const countdownEl = $('countdown');
+function showCount(n) {
+  countdownEl.textContent = n;
+  countdownEl.classList.remove('tick');
+  void countdownEl.offsetWidth; // käynnistää animaation uudelleen
+  countdownEl.classList.add('tick');
+}
+
 function requestStart() {
   if (state !== 'idle') return;
   const delay = Math.max(0, Number(delayEl.value) || 0);
   if (delay === 0) return startRecording();
 
-  state = 'countdown';
+  setState('countdown');
   let left = delay;
   setStatus(`Alkaa ${left}…`);
+  showCount(left);
   beep(660, 100);
   countdownHandle = setInterval(() => {
     left -= 1;
     if (left <= 0) {
       clearInterval(countdownHandle);
       countdownHandle = null;
-      state = 'idle';
+      setState('idle');
       startRecording();
     } else {
       setStatus(`Alkaa ${left}…`);
+      showCount(left);
       beep(660, 100);
     }
   }, 1000);
 }
 
-function startRecording() {
+function releaseMic() {
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  micStream = null;
+}
+
+async function startRecording() {
   if (state !== 'idle' || !stream) return;
-  const mimeType = pickMimeType();
+  setState('starting');
+  let recStream = stream;
+  let mode = audioModeEl.value;
+  if (mode === 'native' && !NativeMic) mode = 'web';
+  if (mode === 'native') {
+    // Natiivi plugin nauhoittaa äänen ja syöttää saman äänen puheentunnistukselle,
+    // joten tavallinen tunnistus pysäytetään tallennuksen ajaksi.
+    try {
+      pauseIdleListening();
+      const r = await NativeMic.start({ language: langEl.value });
+      micNative = true;
+      micStartTime = r.startTime;
+      micHandledLen = 0;
+    } catch (e) {
+      console.warn('Natiivi mikrofoni ei käynnistynyt, käytetään selaimen mikrofonia:', e);
+      micNative = false;
+      resumeIdleListening();
+      mode = 'web';
+    }
+  }
+  if (mode === 'web') {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+      });
+      recStream = new MediaStream([...stream.getVideoTracks(), ...micStream.getAudioTracks()]);
+    } catch (e) {
+      console.warn('Mikrofoni ei käytettävissä, tallennetaan ilman ääntä:', e);
+      releaseMic();
+    }
+  }
+  const mimeType = pickMimeType(recStream);
   chunks = [];
   try {
-    recorder = new MediaRecorder(stream, {
+    recorder = new MediaRecorder(recStream, {
       mimeType: mimeType || undefined,
       videoBitsPerSecond: 10_000_000,
     });
   } catch (e) {
+    releaseMic();
+    if (micNative) { micNative = false; NativeMic.stop().catch(() => {}); resumeIdleListening(); }
+    setState('idle');
     setStatus('Tallennus ei onnistu: ' + e.message);
     return;
   }
   recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   recorder.onstop = finishRecording;
   recorder.start(500);
+  videoStartTime = Date.now();
 
-  state = 'recording';
+  setState('recording');
+  btnSwitch.hidden = true;
   startTime = performance.now();
   btnRecord.classList.add('on');
   timerEl.hidden = false;
-  setStatus('● Tallentaa', true);
+  // Äänen kanssa mikrofoni on videon käytössä, joten "lopeta" ei kuulu: pysäytys napista tai ajastimella.
+  setStatus(micStream ? '● Tallentaa – lopeta napista' : '● Tallentaa', true);
   beep(1320, 200);
 
   timerHandle = setInterval(() => {
@@ -185,7 +267,7 @@ function stopRecording() {
   if (state === 'countdown') {
     clearInterval(countdownHandle);
     countdownHandle = null;
-    state = 'idle';
+    setState('idle');
     setStatus('Valmis – sano "aloita"');
     return;
   }
@@ -196,10 +278,42 @@ function stopRecording() {
   beep(440, 250);
 }
 
-function finishRecording() {
-  const type = recorder.mimeType || 'video/webm';
-  const ext = type.includes('mp4') ? 'mp4' : 'webm';
-  const blob = new Blob(chunks, { type });
+async function finishRecording() {
+  setState('finishing');
+  releaseMic();
+  let extraAudio = null;
+  if (micNative) {
+    micNative = false;
+    try {
+      const r = await NativeMic.stop();
+      const bytes = base64ToBytes(r.data);
+      const frames = [];
+      let o = 0;
+      for (const n of r.sizes) { frames.push(bytes.subarray(o, o + n)); o += n; }
+      extraAudio = {
+        asc: base64ToBytes(r.asc), frames, sampleRate: r.sampleRate, channels: r.channels, bitrate: r.bitrate,
+        offsetMs: videoStartTime - r.startTime, // ääni käynnistyi ennen videota
+      };
+    } catch (e) {
+      console.warn('Natiivin äänen lopetus epäonnistui:', e);
+    }
+    resumeIdleListening();
+  }
+  const recType = recorder.mimeType || 'video/webm';
+  const ext = recType.includes('mp4') ? 'mp4' : 'webm';
+  const type = ext === 'mp4' ? 'video/mp4' : 'video/webm';
+  let blob = new Blob(chunks, { type });
+  if (ext === 'mp4' && window.fixMp4) {
+    // MediaRecorderin MP4 on pilkottu eikä siinä ole kestoa -> toisto takkuaa lopussa.
+    // Muunnetaan tavalliseksi MP4:ksi (data säilyy ennallaan).
+    try {
+      setStatus('Viimeistellään videota…');
+      const fixed = window.fixMp4(new Uint8Array(await blob.arrayBuffer()), { audio: extraAudio });
+      if (fixed) blob = new Blob([fixed], { type });
+    } catch (e) {
+      console.warn('MP4-korjaus epäonnistui, käytetään alkuperäistä:', e);
+    }
+  }
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
   const name = `voicecam-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
@@ -208,7 +322,8 @@ function finishRecording() {
   recorder = null;
   chunks = [];
 
-  state = 'review';
+  setState('review');
+  btnSwitch.hidden = false;
   btnRecord.classList.remove('on');
   timerEl.hidden = true;
   preview.hidden = true;
@@ -236,7 +351,7 @@ function discard() {
   playback.hidden = true;
   preview.hidden = false;
   resultEl.hidden = true;
-  state = 'idle';
+  setState('idle');
   setStatus('Valmis – sano "aloita"');
 }
 
@@ -290,6 +405,7 @@ function matches(text, words) {
 
 function handleTranscript(text) {
   heardEl.textContent = `”${text}”`;
+  if ((state === 'idle' || state === 'review') && matches(text, COMMANDS.flip)) { switchCamera(); return true; }
   if ((state === 'recording' || state === 'countdown') && matches(text, COMMANDS.stop)) { stopRecording(); return true; }
   if (state === 'idle' && matches(text, COMMANDS.start)) { requestStart(); return true; }
   // Tallennuksen jälkeen "aloita" aloittaa suoraan uuden tallenteen, "uusi" palaa kameraan.
@@ -301,6 +417,20 @@ function handleTranscript(text) {
 // Android: järjestelmän puheentunnistin pysähtyy hiljaisuuden jälkeen, joten se käynnistetään uudelleen.
 let nativeHandledLen = 0;
 let nativeStarting = false;
+let micStartTime = 0;
+let micHandledLen = 0;
+
+// Tallennuksen ajaksi tavallinen tunnistus pois (MicShare kuuntelee samaa ääntä), sen jälkeen takaisin.
+function pauseIdleListening() {
+  if (!isNative) return;
+  listening = false;
+  NativeSpeech.stop().catch(() => {});
+}
+function resumeIdleListening() {
+  if (!isNative || listening) return;
+  listening = true;
+  setTimeout(nativeListenOnce, 300);
+}
 
 async function nativeListenOnce() {
   if (!listening || nativeStarting) return;
@@ -328,6 +458,15 @@ async function startNativeListening() {
     const text = full.slice(nativeHandledLen).trim();
     if (text && handleTranscript(text)) nativeHandledLen = full.length;
   });
+  if (NativeMic) {
+    await NativeMic.addListener('partialResults', ({ matches: m }) => {
+      const full = ((m && m[0]) || '').toLowerCase();
+      if (full.length < micHandledLen) micHandledLen = 0; // uusi tunnistusjakso
+      const text = full.slice(micHandledLen).trim();
+      if (text && handleTranscript(text)) micHandledLen = full.length;
+    });
+    await NativeMic.addListener('speechError', (e) => console.log('MicShare puhevirhe', e.code, e.message));
+  }
   await NativeSpeech.addListener('listeningState', ({ status }) => {
     if (status === 'stopped' && listening) setTimeout(nativeListenOnce, 200);
   });
@@ -386,6 +525,28 @@ function restartListening() {
   try { recognition.stop(); } catch (_) {} // onend käynnistää uudelleen
 }
 
+// ---------- Kameran vaihto ----------
+let switching = false;
+async function switchCamera() {
+  if (switching || state === 'off' || state === 'recording' || state === 'countdown') return;
+  if (state === 'review') discard();
+  switching = true;
+  const previous = facing;
+  facing = facing === 'environment' ? 'user' : 'environment';
+  setStatus(facing === 'user' ? 'Etukamera' : 'Takakamera');
+  try {
+    await startCamera();
+    saveSettings();
+    beep(990, 80);
+  } catch (e) {
+    facing = previous; // palataan entiseen, jos toista kameraa ei ole
+    setStatus('Kameran vaihto ei onnistunut');
+    await startCamera().catch(() => {});
+  }
+  switching = false;
+  setTimeout(() => { if (state === 'idle') setStatus('Valmis – sano "aloita"'); }, 1200);
+}
+
 // ---------- Tapahtumat ----------
 btnInit.addEventListener('click', async () => {
   try {
@@ -397,7 +558,8 @@ btnInit.addEventListener('click', async () => {
   }
   btnInit.hidden = true;
   btnRecord.hidden = false;
-  state = 'idle';
+  btnSwitch.hidden = false;
+  setState('idle');
   setStatus('Valmis – sano "aloita"');
   requestWakeLock();
   startListening();
@@ -409,17 +571,28 @@ btnRecord.addEventListener('click', () => {
   else stopRecording();
 });
 btnShare.addEventListener('click', share);
+$('btnClose').addEventListener('click', discard);
+
+// Asetuspaneeli
+const sheet = $('settings');
+const sheetBackdrop = $('sheetBackdrop');
+function openSettings(open) {
+  sheet.classList.toggle('open', open);
+  sheet.setAttribute('aria-hidden', String(!open));
+  sheetBackdrop.hidden = !open;
+}
+$('btnSettings').addEventListener('click', () => openSettings(true));
+$('btnSettingsDone').addEventListener('click', () => openSettings(false));
+sheetBackdrop.addEventListener('click', () => openSettings(false));
+btnSwitch.addEventListener('click', switchCamera);
 btnDownload.addEventListener('click', (e) => {
   if (!isNative) return; // selaimessa download-linkki hoitaa
   e.preventDefault();
   nativeSave();
 });
 
-[langEl, maxLenEl, delayEl, withAudioEl].forEach((el) => el.addEventListener('change', saveSettings));
+[langEl, maxLenEl, delayEl, audioModeEl].forEach((el) => el.addEventListener('change', saveSettings));
 langEl.addEventListener('change', restartListening);
-withAudioEl.addEventListener('change', () => {
-  if (state === 'idle') startCamera().catch((e) => setStatus('Kamera ei käynnisty: ' + e.message));
-});
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state !== 'off') requestWakeLock();
@@ -464,6 +637,11 @@ $('btnIosClose').addEventListener('click', () => {
 });
 btnInit.addEventListener('click', () => { btnInstall.hidden = true; iosInstall.hidden = true; });
 
+// Selaimessa natiivia mikrofonijakoa ei ole: oletuksena ääni pois, jotta komennot toimivat.
+if (!isNative) {
+  audioModeEl.querySelector('option[value="native"]').remove();
+  audioModeEl.value = 'off';
+}
 loadSettings();
 if (!window.isSecureContext) {
   setStatus('Avaa sivu HTTPS-osoitteesta');

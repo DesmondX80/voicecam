@@ -1,10 +1,11 @@
 'use strict';
 // Päivitä versio aina kun sovelluksen tiedostot muuttuvat, jotta puhelin hakee uudet.
-const CACHE = 'voicecam-v4';
+const CACHE = 'voicecam-v9';
 const ASSETS = [
   './',
   'index.html',
   'app.js',
+  'mp4fix.js',
   'capacitor.js',
   'style.css',
   'manifest.webmanifest',

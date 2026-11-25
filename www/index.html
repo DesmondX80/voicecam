@@ -14,53 +14,128 @@
   <title>VoiceCam</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <!-- Läpinäkyvä poster estää Android WebView'n jättimäisen oletus-play-kuvakkeen -->
+<body data-state="off">
+  <!-- SVG-ikonit (käytetään <use href="#i-...">) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-flip" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16"/><path d="M20 21v-5h-5"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v13"/></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-cam" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></symbol>
+    </defs>
+  </svg>
+
   <video id="preview" autoplay playsinline muted poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
   <video id="playback" playsinline controls hidden poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
 
-  <div id="status" class="status">Käynnistä kamera</div>
-  <div id="heard" class="heard"></div>
-  <div id="timer" class="timer" hidden>0.0 s</div>
+  <!-- Aloitusnäkymä -->
+  <section id="welcome" class="welcome">
+    <div class="logo"><span></span></div>
+    <h1>VoiceCam</h1>
+    <p class="lead">Ohjaa videokameraa äänellä – kädet vapaina.</p>
+    <ul class="chips" aria-label="Äänikomennot">
+      <li><b>aloita</b></li><li><b>lopeta</b></li><li><b>vaihda</b></li><li><b>uusi</b></li>
+    </ul>
+    <button id="btnInit" class="btn btn-primary btn-lg">
+      <svg class="ic"><use href="#i-cam"/></svg> Käynnistä kamera
+    </button>
+    <button id="btnInstall" class="btn btn-ghost" hidden>Asenna sovellus</button>
+  </section>
 
-  <div id="controls" class="controls">
-    <button id="btnInit" class="primary">Käynnistä kamera</button>
-    <button id="btnInstall" hidden>Asenna sovellus</button>
-    <button id="btnRecord" class="record" hidden aria-label="Aloita / lopeta tallennus"></button>
+  <!-- Yläpalkki -->
+  <header class="topbar">
+    <button id="btnClose" class="icon-btn glass" aria-label="Takaisin kameraan" title="Takaisin kameraan">
+      <svg class="ic"><use href="#i-x"/></svg>
+    </button>
+    <div class="status-wrap">
+      <div id="status" class="pill glass" role="status" aria-live="polite">Käynnistä kamera</div>
+      <div id="timer" class="pill rec-pill" hidden>0.0 s</div>
+      <div id="heard" class="caption"></div>
+    </div>
+    <button id="btnSettings" class="icon-btn glass" aria-label="Asetukset" title="Asetukset">
+      <svg class="ic"><use href="#i-gear"/></svg>
+    </button>
+  </header>
+
+  <div id="countdown" class="countdown" aria-hidden="true"></div>
+
+  <!-- Alapalkki: tallennus + kameran vaihto -->
+  <footer id="controls" class="controls">
+    <span class="side"></span>
+    <button id="btnRecord" class="shutter" hidden aria-label="Aloita / lopeta tallennus"><span></span></button>
+    <span class="side">
+      <button id="btnSwitch" class="icon-btn glass" hidden aria-label="Vaihda etu- / takakamera" title="Vaihda kamera">
+        <svg class="ic"><use href="#i-flip"/></svg>
+      </button>
+    </span>
+  </footer>
+
+  <!-- Tallennuksen jälkeen -->
+  <div id="result" class="result glass" hidden>
+    <button id="btnShare" class="btn btn-primary"><svg class="ic"><use href="#i-share"/></svg> Jaa</button>
+    <a id="btnDownload" class="btn btn-secondary"><svg class="ic"><use href="#i-save"/></svg> Tallenna</a>
   </div>
 
-  <div id="result" class="result" hidden>
-    <button id="btnShare" class="primary">Jaa</button>
-    <a id="btnDownload" class="button">Tallenna laitteelle</a>
-  </div>
+  <!-- Asetukset (alapaneeli) -->
+  <div id="sheetBackdrop" class="backdrop" hidden></div>
+  <section id="settings" class="sheet" aria-hidden="true" aria-labelledby="settingsTitle">
+    <div class="grabber"></div>
+    <div class="sheet-head">
+      <h2 id="settingsTitle">Asetukset</h2>
+      <button id="btnSettingsDone" class="btn btn-text">Valmis</button>
+    </div>
 
-  <details id="settings" class="settings">
-    <summary>Asetukset</summary>
-    <label>Kieli
-      <select id="lang">
-        <option value="fi-FI">Suomi</option>
-        <option value="en-US">English</option>
-      </select>
-    </label>
-    <label>Maksimipituus (s)
-      <input id="maxLen" type="number" min="2" max="60" value="10">
-    </label>
-    <label>Viive aloituskomennosta (s)
-      <input id="delay" type="number" min="0" max="10" value="0">
-    </label>
-    <label><input id="withAudio" type="checkbox"> Tallenna ääni (voi häiritä puheentunnistusta)</label>
-    <p class="hint">
-      Komennot: <b>aloita / kuvaa / start</b> ja <b>lopeta / stop / seis</b>.
-      Tallennus pysähtyy myös automaattisesti maksimipituuden jälkeen.
-    </p>
-  </details>
+    <div class="group">
+      <label class="row">
+        <span>Kieli</span>
+        <select id="lang">
+          <option value="fi-FI">Suomi</option>
+          <option value="en-US">English</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>Maksimipituus</span>
+        <span class="num"><input id="maxLen" type="number" min="2" max="60" value="10" inputmode="numeric"> s</span>
+      </label>
+      <label class="row">
+        <span>Viive aloituksesta</span>
+        <span class="num"><input id="delay" type="number" min="0" max="10" value="0" inputmode="numeric"> s</span>
+      </label>
+    </div>
 
-  <div id="iosInstall" class="ios-install" hidden>
-    Asenna: paina <b>Jaa</b> <span aria-hidden="true">⬆︎</span> ja valitse <b>Lisää Koti-valikkoon</b>.
-    <button id="btnIosClose" aria-label="Sulje">✕</button>
+    <div class="group">
+      <label class="row stack">
+        <span>Ääni</span>
+        <select id="audioMode">
+          <option value="native">Ääni + äänikomennot (Android 13+)</option>
+          <option value="web">Ääni – lopetus napista / ajastimella</option>
+          <option value="off">Ei ääntä – äänikomennot toimivat</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="group help">
+      <h3>Äänikomennot</h3>
+      <dl>
+        <dt>aloita · kuvaa · start</dt><dd>Aloita tallennus</dd>
+        <dt>lopeta · stop · seis</dt><dd>Lopeta tallennus</dd>
+        <dt>vaihda · switch</dt><dd>Etu- / takakamera</dd>
+        <dt>uusi · again</dt><dd>Takaisin kameraan</dd>
+      </dl>
+      <p>Tallennus pysähtyy myös automaattisesti maksimipituuden jälkeen.</p>
+    </div>
+  </section>
+
+  <div id="iosInstall" class="ios-install glass" hidden>
+    Asenna: paina <b>Jaa</b> ja valitse <b>Lisää Koti-valikkoon</b>.
+    <button id="btnIosClose" class="icon-btn" aria-label="Sulje"><svg class="ic"><use href="#i-x"/></svg></button>
   </div>
 
   <script src="capacitor.js"></script>
+  <script src="mp4fix.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

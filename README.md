@@ -39,6 +39,7 @@ Sivun pitää tulla HTTPS-osoitteesta (katso Kehitys).
 | Aloita | aloita, kuvaa, nauhoita, tallenna, start, record |
 | Lopeta | lopeta, stop, seis, valmis |
 | Takaisin kameraan | uusi, uudestaan, again |
+| Vaihda etu-/takakamera | vaihda, käännä, switch, flip |
 
 Asetuksissa voi valita kielen (fi/en), maksimipituuden, aloitusviiveen ja äänen tallennuksen.
 
@@ -57,7 +58,13 @@ python3 -m http.server 8000 --directory www
 
 ## Tunnetut rajoitukset
 
-- Video tallennetaan ilman ääntä oletuksena, koska samanaikainen äänitallennus voi viedä mikrofonin puheentunnistukselta.
+- Android antaa mikrofonin vain yhdelle kaappaajalle kerrallaan. Asetuksen **Ääni** vaihtoehdot:
+  - **Ääni + äänikomennot** (APK, Android 13+, oletus): oma natiivi plugin (`MicSharePlugin.java`) nauhoittaa
+    mikrofonia, pakkaa äänen AAC:ksi ja syöttää saman äänen puheentunnistimelle (`EXTRA_AUDIO_SOURCE`).
+    Ääni liitetään videoon tallennuksen jälkeen (`www/mp4fix.js`).
+  - **Ääni – lopetus napista / ajastimella**: selaimen mikrofoni videolle; "lopeta" ei kuulu tallennuksen aikana.
+  - **Ei ääntä**: kaikki äänikomennot toimivat (oletus selaimessa).
+- MediaRecorderin pilkottu MP4 muunnetaan tallennuksen jälkeen tavalliseksi MP4:ksi (`www/mp4fix.js`), jotta kesto on oikein ja toisto ei takkua lopussa.
 - iOS tallentaa MP4:ää. Android Chrome tallentaa MP4:ää uusissa versioissa ja muuten WebM:ää, jota
   kaikki sovellukset eivät avaa.
 - Kuvanopeus riippuu selaimesta ja laitteesta (pyydetään 60 fps). Selain ei pääse puhelimen
