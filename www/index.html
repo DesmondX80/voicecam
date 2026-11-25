@@ -15,8 +15,9 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <video id="preview" autoplay playsinline muted></video>
-  <video id="playback" playsinline controls hidden></video>
+  <!-- Läpinäkyvä poster estää Android WebView'n jättimäisen oletus-play-kuvakkeen -->
+  <video id="preview" autoplay playsinline muted poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
+  <video id="playback" playsinline controls hidden poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></video>
 
   <div id="status" class="status">Käynnistä kamera</div>
   <div id="heard" class="heard"></div>
