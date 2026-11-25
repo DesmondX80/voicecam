@@ -12,6 +12,10 @@
  * opts.trim (valinnainen): { startMs, endMs } videon alusta. Näytteet ennen edeltävää avainkuvaa ja
  *   lopun jälkeen poistetaan; tarkka alku- ja loppukohta merkitään edit listiin (edts/elst),
  *   joten uudelleenpakkausta ei tarvita.
+ *
+ * opts.slowdown (valinnainen): hidastuskerroin, esim. 8 = 480 fps:n kuvaus toistuu 60 fps:llä
+ *   (5 s -> 40 s). Videon näytteiden kestot kerrotaan kertoimella (leikkauksen jälkeen, joten
+ *   trim on yhä reaaliaikaa). Ääniraidat jätetään pois, koska ääntä ei voi venyttää purkamatta.
  */
 (function (root) {
   const CONTAINERS = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'mvex', 'moof', 'traf', 'edts', 'dinf']);
@@ -248,7 +252,7 @@
       order = chunkList.map((x) => x.tr);
     }
 
-    const list = Object.values(tracks).filter((t) => t.samples.length);
+    let list = Object.values(tracks).filter((t) => t.samples.length);
     if (!list.length) return null;
 
     // Erikseen nauhoitettu ääni (vain jos videossa ei jo ole ääniraitaa)
@@ -303,6 +307,19 @@
         extra.frames = r.kept.map((x) => x.f);
         extra.edit = r.edit;
         if (!extra.frames.length) extra = null;
+      }
+    }
+
+    // ---------- hidastus ----------
+    const k = opts.slowdown;
+    if (k && k > 1) {
+      list = list.filter((t) => t.handler !== 'soun');
+      order = order.filter((t) => t.handler !== 'soun');
+      extra = null;
+      if (!list.length) return null;
+      for (const t of list) {
+        for (const x of t.samples) { x.dur = Math.round(x.dur * k); x.cto = Math.round(x.cto * k); }
+        if (t.edit) t.edit = { mediaTime: Math.round(t.edit.mediaTime * k), duration: Math.round(t.edit.duration * k) };
       }
     }
 

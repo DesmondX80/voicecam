@@ -49,7 +49,9 @@ APK lukee käynnistyessään laitteen kameroiden tilat (`HighSpeedCamPlugin.java
 (tasatilanteessa suurempi resoluutio, sitten pääkamera ennen laajakulmaa). Asetuksista voi valita tilan myös käsin.
 
 - **Hidastustilat** (Camera2 constrained high-speed, esim. 720p 120/240/480 fps): esikatselu ja tallennus natiivisti,
-  esikatselu läpinäkyvän WebView:n alla. Video tallentuu todellisella nopeudella; ääni MicSharelta.
+  esikatselu läpinäkyvän WebView:n alla. Tallennettu video hidastetaan 60 fps:n videoksi kuten puhelimen omassa
+  kamerassa (480 fps: 5 s -> 40 s, `fixMp4`-optio `slowdown`); hidastetussa videossa ei ole ääntä.
+  Iso tiedosto kirjoitetaan levylle paloina (`writeBlobNative`).
 - **Tavalliset tilat**: selainkamera (getUserMedia) laitteen suurimmalla tavallisella nopeudella (esim. 60 fps).
 - Esim. moto g86 power: 720p 120 fps (laajakulma), pääkamera 60 fps. Selainversio käyttää aina selainkameraa.
 

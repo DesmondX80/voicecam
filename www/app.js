@@ -49,6 +49,19 @@ function base64ToBytes(b64) {
   return out;
 }
 
+// Iso video kirjoitetaan paloina: koko tiedosto yhtenä base64-merkkijonona (480 fps -> kymmeniä Mt)
+// kaataa WebView:n. Palan koko on 3:n monikerta, jotta base64-palat ovat itsenäisiä.
+async function writeBlobNative(blob, path, directory) {
+  const CHUNK = 3 * 1024 * 1024;
+  let uri = null;
+  for (let off = 0; off === 0 || off < blob.size; off += CHUNK) {
+    const data = await blobToBase64(blob.slice(off, off + CHUNK));
+    if (off === 0) uri = (await NativeFs.writeFile({ path, data, directory, recursive: true })).uri;
+    else await NativeFs.appendFile({ path, data, directory });
+  }
+  return uri;
+}
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -524,13 +537,16 @@ async function finishRecording() {
     type = ext === 'mp4' ? 'video/mp4' : 'video/webm';
     blob = new Blob(chunks, { type });
   }
+  // Hidastus: esim. 480 fps tallennetaan 60 fps:n videoksi (5 s -> 40 s), kuten puhelimen oma kamera.
+  const slowdown = camKind === 'native' && activeMode && activeMode.fps > 60 ? activeMode.fps / 60 : 1;
+  let slowed = false;
   if (ext === 'mp4' && window.fixMp4) {
     // MediaRecorderin MP4 on pilkottu eikä siinä ole kestoa -> toisto takkuaa lopussa.
     // Muunnetaan tavalliseksi MP4:ksi (data säilyy ennallaan).
     try {
       setStatus('Viimeistellään videota…');
-      const fixed = window.fixMp4(new Uint8Array(await blob.arrayBuffer()), { audio: extraAudio, trim: golf.trim });
-      if (fixed) blob = new Blob([fixed], { type });
+      const fixed = window.fixMp4(new Uint8Array(await blob.arrayBuffer()), { audio: extraAudio, trim: golf.trim, slowdown });
+      if (fixed) { blob = new Blob([fixed], { type }); slowed = slowdown > 1; }
     } catch (e) {
       console.warn('MP4-korjaus epäonnistui, käytetään alkuperäistä:', e);
     }
@@ -558,6 +574,7 @@ async function finishRecording() {
   btnShare.hidden = !canShare;
 
   resultEl.hidden = false;
+  if (slowed) golf.note = `${golf.note ? golf.note + ' · ' : ''}Hidastus ${slowdown}× (60 fps, ilman ääntä)`;
   setStatus(golf.note || `Tallennettu (${(blob.size / 1e6).toFixed(1)} MB) – "aloita" kuvaa uuden`);
 }
 
@@ -599,8 +616,7 @@ async function share() {
 async function nativeShare() {
   try {
     setStatus('Valmistellaan jakoa…');
-    const data = await blobToBase64(recordedFile);
-    const { uri } = await NativeFs.writeFile({ path: recordedFile.name, data, directory: 'CACHE' });
+    const uri = await writeBlobNative(recordedFile, recordedFile.name, 'CACHE');
     setStatus('Valitse sovellus');
     await NativeShare.share({ title: recordedFile.name, files: [uri], dialogTitle: 'Jaa video' });
   } catch (e) {
@@ -613,10 +629,7 @@ async function nativeSave() {
   if (!recordedFile) return;
   try {
     setStatus('Tallennetaan…');
-    const data = await blobToBase64(recordedFile);
-    await NativeFs.writeFile({
-      path: `VoiceCam/${recordedFile.name}`, data, directory: 'DOCUMENTS', recursive: true,
-    });
+    await writeBlobNative(recordedFile, `VoiceCam/${recordedFile.name}`, 'DOCUMENTS');
     setStatus(`Tallennettu: Documents/VoiceCam/${recordedFile.name}`);
   } catch (e) {
     setStatus('Tallennus epäonnistui: ' + e.message);
